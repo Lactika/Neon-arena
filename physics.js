@@ -21,3 +21,14 @@ export function wallContact(x,z,phase){
  const distance=(1-q)*q/(n||1);if(distance>.45)return null;
  return {x:-nx/n,z:-nz/n};
 }
+
+// Input timing is separate from collision detection so it can also be used on platforms.
+export class JumpWindow {
+ constructor(windowMs=130){this.windowMs=windowMs;this.reset()}
+ reset(){this.lastGround=-Infinity;this.requested=-Infinity;this.consumed=false;this.held=false}
+ ground(now,grounded){if(grounded){this.lastGround=now;this.consumed=false}}
+ press(now){this.held=true;this.requested=now}
+ release(){this.held=false}
+ take(now){if(now-this.requested<=this.windowMs&&now-this.lastGround<=this.windowMs&&!this.consumed){this.requested=-Infinity;this.consumed=true;return true}return false}
+ discard(){this.requested=-Infinity;this.consumed=true}
+}
