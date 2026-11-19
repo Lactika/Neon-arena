@@ -29,7 +29,10 @@ const presets={
  blitz:{character:'blitz',hair:3,clothes:1,eyes:0},
  skye:{character:'skye',hair:2,clothes:4,eyes:1},
  yoru:{character:'yoru',hair:4,clothes:5,eyes:1},
- celeste:{character:'celeste',hair:5,clothes:6,eyes:1}
+ celeste:{character:'celeste',hair:5,clothes:6,eyes:1},
+ noch:{character:'noch',hair:6,clothes:7,eyes:0},
+ ari:{character:'ari',hair:7,clothes:8,eyes:2},
+ ben:{character:'ben',hair:8,clothes:9,eyes:3}
 };
 const mapPhase=room=>room.phase==='lobby'?(room.mode==='hub'?'hub':'lobby'):room.map==='duct'?'duct':room.map==='station'?'station':room.map==='neoball'?'neoball':room.phase;
 const ductSpawns=[[-4,-14],[4,14],[4,-14],[-4,14]];

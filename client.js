@@ -11,14 +11,17 @@ import { constrainPosition, wallContact, wallSlideVelocity, JumpWindow, WallKick
 const $=s=>document.querySelector(s), menu=$('#menu'), hud=$('#hud');
 function initTelegram(){const tg=window.Telegram?.WebApp;try{tg?.ready();tg?.expand()}catch{};const user=tg?.initDataUnsafe?.user;if(user&&!$('#name').value)$('#name').value=user.username?'@'+user.username:user.first_name||''} initTelegram();document.addEventListener('DOMContentLoaded',initTelegram);
 let refreshPreview=()=>{};
-const validHeroes=['shadow','viper','blitz','skye','yoru','celeste'];
+const validHeroes=['shadow','viper','blitz','skye','yoru','celeste','noch','ari','ben'];
 const heroLooks={
  shadow:{character:'shadow',hair:0,clothes:0,eyes:0},
  viper:{character:'viper',hair:1,clothes:3,eyes:0},
  blitz:{character:'blitz',hair:3,clothes:1,eyes:0},
  skye:{character:'skye',hair:2,clothes:4,eyes:1},
  yoru:{character:'yoru',hair:4,clothes:5,eyes:1},
- celeste:{character:'celeste',hair:5,clothes:6,eyes:1}
+ celeste:{character:'celeste',hair:5,clothes:6,eyes:1},
+ noch:{character:'noch',hair:6,clothes:7,eyes:0},
+ ari:{character:'ari',hair:7,clothes:8,eyes:2},
+ ben:{character:'ben',hair:8,clothes:9,eyes:3}
 };
 const heroDescriptions={
  shadow:'Скрытный боец в фиолетовой броне.',
@@ -26,7 +29,10 @@ const heroDescriptions={
  blitz:'Голубой импульс и быстрая атака.',
  skye:'Чёрные волосы и жёлтый кибер-костюм.',
  yoru:'Чёрные волосы и фиолетовая броня.',
- celeste:'Два хвостика и белое неоновое платье.'
+ celeste:'Два хвостика и белое неоновое платье.',
+ noch:'Чёрный хвостик, бородка и фиолетовый комбинезон.',
+ ari:'Длинные коричневые волосы, зелёные глаза, белое худи и джинсы.',
+ ben:'Короткая стрижка, голубая кофта и серые штаны.'
 };
 let look={...heroLooks.shadow,outfit:'default',weaponSkin:'default'};
 for(const button of document.querySelectorAll('.hero-card'))button.addEventListener('click',()=>{let hero=button.dataset.hero;look={...heroLooks[hero],outfit:'default',weaponSkin:'default'};$('#selected-name').textContent=hero.toUpperCase();$('#selected-desc').textContent=heroDescriptions[hero];for(const el of document.querySelectorAll('.hero-card')){let active=el===button;el.classList.toggle('active',active);el.setAttribute('aria-pressed',String(active))}refreshPreview()});
@@ -234,7 +240,10 @@ const heroPalettes={
  blitz:{hair:0x117bd8,hairLight:0x48b6ff,hairDark:0x174395,suit:0x142c49,armor:0x245c92,trim:0x178ad2,glow:0x5de8ff,skin:0xf1c1a3,eye:0x1676c1},
  skye:{hair:0x141620,hairLight:0x2c3144,hairDark:0x090a10,suit:0x22242e,armor:0xebb91f,trim:0xffe44d,glow:0xfff06a,skin:0xfacbb1,eye:0x14151e},
  yoru:{hair:0x13141f,hairLight:0x2a2d42,hairDark:0x090a11,suit:0x1f1934,armor:0x602cb0,trim:0xa05eff,glow:0xc585ff,skin:0xf4c5aa,eye:0x13141c},
- celeste:{hair:0x13151e,hairLight:0x2b2f40,hairDark:0x090a0f,suit:0xeaf2fb,armor:0xffffff,trim:0x6adfff,glow:0xa6f4ff,skin:0xffd1b8,eye:0x13151e}
+ celeste:{hair:0x13151e,hairLight:0x2b2f40,hairDark:0x090a0f,suit:0xeaf2fb,armor:0xffffff,trim:0x6adfff,glow:0xa6f4ff,skin:0xffd1b8,eye:0x13151e},
+ noch:{hair:0x12131b,hairLight:0x272938,hairDark:0x08090e,suit:0x532d96,armor:0x6d3ec4,trim:0xa864ff,glow:0xd68fff,skin:0xf3c5a3,eye:0x151620},
+ ari:{hair:0x6e3d22,hairLight:0x965734,hairDark:0x472514,suit:0xebf2fa,armor:0xffffff,trim:0x2ee69d,glow:0x63ffc6,skin:0xffceb4,eye:0x1fc463},
+ ben:{hair:0x523421,hairLight:0x784d31,hairDark:0x331f13,suit:0x239af0,armor:0x42baff,trim:0x72e6ff,glow:0x8ff2ff,skin:0xf7c7ac,eye:0x1b4c7a}
 };
 const outfitPalettes={
  default:{swatch:'linear-gradient(135deg,#2b3556,#7084b8)'},
@@ -281,15 +290,19 @@ function avatar(l, teamRole=null){
   box(root,.73,.05,.49,hero.trim,0,.58,0,true);
   box(root,.20,.10,.05,hero.trim,0,.84,.23);
  }
+ const isDefaultOutfit=!l.outfit||l.outfit==='default';
+ const legMain=l.character==='celeste'?skin:(isDefaultOutfit&&l.character==='ari')?0x2d5b8e:(isDefaultOutfit&&l.character==='ben')?0x636e82:hero.suit;
+ const legAccent=(isDefaultOutfit&&l.character==='ari')?0x22466e:(isDefaultOutfit&&l.character==='ben')?0x4d5668:hero.armor;
+ const shoeColor=l.character==='celeste'?hero.armor:(isDefaultOutfit&&l.character==='ari')?0xeef4fb:(isDefaultOutfit&&l.character==='ben')?0x222736:black;
  const legs=[],arms=[];
  for(const side of [-1,1]){
   let leg=group(root,side*.17,.77,0);legs.push(leg);
-  box(leg,.27,.42,.30,l.character==='celeste'?skin:hero.suit,0,-.21,0);
-  box(leg,.28,.19,.33,hero.armor,0,-.29,-.015);
+  box(leg,.27,.42,.30,legMain,0,-.21,0);
+  box(leg,.28,.19,.33,legAccent,0,-.29,-.015);
   box(leg,.22,.055,.34,hero.trim,0,-.32,-.02);
-  box(leg,.30,.15,.43,l.character==='celeste'?hero.armor:black,0,-.67,-.045);
+  box(leg,.30,.15,.43,shoeColor,0,-.67,-.045);
   box(leg,.30,.07,.42,hero.trim,0,-.68,-.05);
-  box(leg,.24,.23,.30,l.character==='celeste'?hero.armor:hero.suit,0,-.50,0);
+  box(leg,.24,.23,.30,l.character==='celeste'?hero.armor:legMain,0,-.50,0);
   let arm=group(root,side*.40,1.24,0);arms.push(arm);
   box(arm,.25,.40,.28,l.character==='celeste'?skin:hero.suit,0,-.20,0);
   box(arm,.32,.17,.35,hero.armor,0,-.025,0);
@@ -343,6 +356,40 @@ function avatar(l, teamRole=null){
    box(head,.16,.38,.16,hero.hairDark,side*.51,-.22,.08,false,side*-.12);
    box(head,.11,.22,.12,hero.hairLight,side*.53,-.46,.10,false,side*-.08);
   }
+ }else if(l.character==='noch'){
+  // Long black ponytail + small neat goatee beard + purple jumpsuit straps/belt
+  box(head,.15,.11,.11,hero.trim,0,.14,.34,true);
+  box(head,.18,.28,.17,hero.hair,0,.06,.43);
+  box(head,.15,.30,.15,hero.hairDark,0,-.20,.46);
+  box(head,.11,.20,.12,hero.hairLight,0,-.40,.48);
+  box(head,.10,.28,.14,hero.hairDark,-.29,-.02,-.16);
+  box(head,.10,.28,.14,hero.hairDark,.29,-.02,-.16);
+  box(head,.16,.08,.04,hero.hairDark,0,-.235,-.255);
+  box(head,.18,.03,.035,hero.hairDark,0,-.13,-.262);
+  box(head,.045,.10,.035,hero.hairDark,-.075,-.185,-.260);
+  box(head,.045,.10,.035,hero.hairDark,.075,-.185,-.260);
+  box(root,.09,.38,.04,hero.trim,-.14,1.12,-.20);
+  box(root,.09,.38,.04,hero.trim,.14,1.12,-.20);
+  box(root,.44,.10,.36,hero.armor,0,.86,0);
+  box(root,.12,.08,.05,hero.glow,0,.86,-.20,true);
+ }else if(l.character==='ari'){
+  // Long flowing brown hair + white hoodie hood & pocket
+  box(head,.68,.54,.15,hero.hairDark,0,-.18,.28);
+  box(head,.56,.28,.12,hero.hair,0,-.46,.29);
+  box(head,.14,.52,.20,hero.hair,-.31,-.10,-.06,false,.06);
+  box(head,.14,.52,.20,hero.hairLight,.31,-.10,-.06,false,-.06);
+  box(root,.52,.16,.18,hero.armor,0,1.32,.16);
+  box(root,.46,.10,.14,hero.suit,0,1.27,.23);
+  box(root,.36,.16,.04,hero.suit,0,.88,-.19);
+  box(root,.035,.18,.03,hero.trim,-.06,1.18,-.20);
+  box(root,.035,.18,.03,hero.trim,.06,1.18,-.20);
+ }else if(l.character==='ben'){
+  // Short textured haircut + blue sweater collar & cuff
+  box(head,.26,.11,.28,hero.hairLight,-.14,.42,-.06,false,.08);
+  box(head,.26,.10,.28,hero.hair,.14,.41,-.04,false,-.08);
+  box(head,.18,.08,.14,hero.hairLight,.06,.31,-.27,false,-.14);
+  box(root,.42,.08,.35,hero.trim,0,1.30,0);
+  box(root,.58,.08,.36,hero.armor,0,.79,0);
  }else{
   for(let side of [-1,1])box(head,.21,.13,.30,hero.hairLight,side*.19,.37,-.05,false,side*.12);
   box(root,.50,.40,.07,hero.armor,0,.91,.22);box(root,.08,.35,.04,hero.trim,0,.94,.27);
