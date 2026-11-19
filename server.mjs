@@ -38,14 +38,41 @@ const mapPhase=room=>room.phase==='lobby'?(room.mode==='hub'?'hub':'lobby'):room
 const ductSpawns=[[-4,-14],[4,14],[4,-14],[-4,14]];
 const gardenSpawns=[[0,15.5],[-10,-4],[10,4],[-14.5,13.5],[14.5,-13.5]];
 const spawns=[[-18,-8],[18,8],[-18,8],[18,-8]];const RESPAWN={x:18,z:0};
-const VOTE_DURATION=Number(process.env.VOTE_DURATION_MS)||10000;const LEGACY_VOTE_DURATION=15000;const QUEUE_DURATION=Number(process.env.QUEUE_DURATION_MS)||15000;const HUB_LIMIT=24;
+const VOTE_DURATION=Number(process.env.VOTE_DURATION_MS)||10000;const LEGACY_VOTE_DURATION=15000;const QUEUE_DURATION=Number(process.env.QUEUE_DURATION_MS)||8000;const HUB_LIMIT=24;
 const RESPAWN_DELAY=5000;
+const BOT_NAMES=['БОТ КАЙ','БОТ НЕО','БОТ ВЕГА','БОТ ЗЕРО','БОТ ЛУНА','БОТ РЭЙ'];
+const BOT_HEROES=Object.keys(presets);
+const BOT_OUTFITS=['default','cyber_gold','crimson_oni','arctic_white','emerald_phantom'];
 const hub={code:'HUB',mode:'hub',map:'colosseum',players:new Map(),phase:'lobby',ends:0,epoch:0,countdown:0,results:null,queues:Object.fromEntries(HUB_ZONES.map(z=>[z.id,{ends:0}]))};rooms.set('HUB',hub);
-const voteCounts=room=>{let v={duct:0,colosseum:0,station:0,garden:0};for(const p of room.players.values()){let id=room.mode==='voting'?p.vote:voteAt(p.x,p.z);if(id)v[id]++}return v};
+const voteCounts=room=>{let v={duct:0,colosseum:0,station:0,garden:0};for(const p of room.players.values()){if(p.isBot)continue;let id=room.mode==='voting'?p.vote:voteAt(p.x,p.z);if(id)v[id]++}return v};
 const chooseMap=room=>{let v=voteCounts(room);return ['colosseum','duct','station','garden'].reduce((a,b)=>v[b]>v[a]?b:a)};
-const send=(ws,obj)=>{if(ws.readyState===1)ws.send(JSON.stringify(obj))};
+const send=(ws,obj)=>{if(ws&&ws.readyState===1)ws.send(JSON.stringify(obj))};
 function broadcast(room,obj){for(const p of room.players.values())send(p.ws,obj)}
-function state(room){return {type:'state',now:Date.now(),code:room.code,map:room.map,phase:room.phase,mode:room.mode||'private',ends:room.ends,epoch:room.epoch,countdown:room.countdown||0,sector:room.sector||0,votes:room.phase==='lobby'&&room.mode!=='hub'?voteCounts(room):null,queues:room.mode==='hub'?HUB_ZONES.map(z=>({id:z.id,capacity:z.capacity,minPlayers:z.minPlayers||z.capacity,mode:z.mode||'classic',count:[...room.players.values()].filter(p=>p.queue===z.id).length,ends:room.queues[z.id].ends})):null,neo:room.neo||null,chaser:room.chaser||null,players:[...room.players.values()].map(({ws,lastShot,lastMove,lastBounce,slideAt,lastKickWall,...p})=>p),results:room.results}}
+function makeBot(room,slotIndex){
+ let usedNames=new Set([...room.players.values()].map(p=>p.name));
+ let name=BOT_NAMES.find(n=>!usedNames.has(n))||`БОТ ${slotIndex+1}`;
+ let usedHeroes=new Set([...room.players.values()].map(p=>p.look?.character));
+ let availHeroes=BOT_HEROES.filter(h=>!usedHeroes.has(h));
+ let heroKey=(availHeroes.length?availHeroes:BOT_HEROES)[randomInt(0,(availHeroes.length||BOT_HEROES.length))];
+ let outfit=BOT_OUTFITS[randomInt(0,BOT_OUTFITS.length)];
+ let weapon=randomInt(0,10)<7?'smg':'shotgun';
+ return {
+  id:'bot-'+randomUUID().slice(0,8),ws:null,isBot:true,name,
+  look:{...presets[heroKey],outfit,weaponSkin:'default'},
+  x:((slotIndex%4)-1.5)*1.4,z:-5.2,y:0,flip:0,angle:0,hp:100,maxHp:100,eliminated:false,kills:0,deaths:0,
+  ready:false,seated:false,weapon,coins:10000,owned:['smg','shotgun'],ownedOutfits:['default'],ownedWeaponSkins:['default'],
+  lastShot:0,lastMove:Date.now(),moveCredit:10,moveSeq:0,spawnRev:0,respawnAt:0,invulnerableUntil:0,queue:null,vote:null,
+  ai:{strafeDir:randomInt(0,2)?1:-1,strafeUntil:0,jumpAt:0,vy:0,wanderX:0,wanderZ:0,wanderUntil:0,stuckTicks:0}
+ };
+}
+function fillRoomBots(room,targetCount){
+ let slot=0;
+ while(room.players.size<targetCount){
+  let bot=makeBot(room,slot++);
+  room.players.set(bot.id,bot);
+ }
+}
+function state(room){return {type:'state',now:Date.now(),code:room.code,map:room.map,phase:room.phase,mode:room.mode||'private',ends:room.ends,epoch:room.epoch,countdown:room.countdown||0,sector:room.sector||0,votes:room.phase==='lobby'&&room.mode!=='hub'?voteCounts(room):null,queues:room.mode==='hub'?HUB_ZONES.map(z=>({id:z.id,capacity:z.capacity,minPlayers:z.minPlayers||z.capacity,mode:z.mode||'classic',count:[...room.players.values()].filter(p=>p.queue===z.id).length,ends:room.queues[z.id].ends})):null,neo:room.neo||null,chaser:room.chaser||null,players:[...room.players.values()].map(({ws,ai,botChoice,botPromptedZone,lastShot,lastMove,lastBounce,slideAt,lastKickWall,...p})=>p),results:room.results}}
 function sync(room){broadcast(room,state(room))}
 const NEO_DURATION=Number(process.env.NEO_DURATION_MS)||300000,NEO_RESET=Number(process.env.NEO_RESET_MS)||3000;
 function neoSpawn(p,i){return {x:(i<2?-3:3),z:p.team==='A'?-55:55}}
@@ -56,7 +83,26 @@ function respawnPos(room,p){
  let s=(room.map==='duct'||room.map==='station'?ductSpawns:spawns)[i%4];
  return {x:s[0],z:s[1]};
 }
+function tryStartRoom(room){
+ if(room.mode==='private'){
+  let humans=[...room.players.values()].filter(p=>!p.isBot);
+  if(humans.length===1&&!room.botConsent){
+   room.countdown=0;
+   if(!room.botPrompted){
+    room.botPrompted=true;
+    send(humans[0].ws,{type:'bot_prompt',mode:'private',capacity:4,currentCount:1,botsToAdd:3});
+   }
+   sync(room);return;
+  }
+ }
+ start(room);
+}
 function start(room){
+ if(room.mode==='private'){
+  let humans=[...room.players.values()].filter(p=>!p.isBot);
+  if(humans.length===1&&room.players.size<4)fillRoomBots(room,4);
+  room.botConsent=false;room.botPrompted=false;
+ }
  room.map=room.mode==='neoball'?'neoball':room.mode==='chaser'?'garden':chooseMap(room);
  room.countdown=0;room.epoch++;room.phase='match';
  room.ends=Date.now()+(room.mode==='neoball'?NEO_DURATION:room.mode==='chaser'?(Number(process.env.CHASER_DURATION_MS)||240000):(Number(process.env.MATCH_DURATION_MS)||180000));
@@ -75,6 +121,7 @@ function start(room){
   let s=room.map==='garden'?(room.mode==='chaser'?(i===chaserIdx?gardenSpawns[0]:gardenSpawns[1+(survIdx++%4)]):gardenSpawns[i%gardenSpawns.length]):(room.map==='duct'||room.map==='station'?ductSpawns:spawns)[i%4];
   let startHp=(room.mode==='chaser'&&p.team==='chaser')?400:100;
   Object.assign(p,{x:pos?pos.x:s[0],z:pos?pos.z:s[1],y:0,flip:0,seated:false,wallSliding:false,lastKickWall:null,hp:startHp,maxHp:startHp,eliminated:false,kills:0,deaths:0,ready:false,respawnAt:0,invulnerableUntil:Date.now()+3000});
+  if(p.ai)Object.assign(p.ai,{vy:0,stuckTicks:0,wanderUntil:0,strafeUntil:0,jumpAt:0});
  }
  if(chaserPlayer){
   for(const p of list)send(p.ws,{type:'chaser_assigned',chaserId:chaserPlayer.id,chaserName:chaserPlayer.name,isMe:p.id===chaserPlayer.id});
@@ -127,13 +174,27 @@ function updateHubQueues(){
  for(const zone of HUB_ZONES){
   let members=[...hub.players.values()].filter(p=>p.queue===zone.id);
   let minP=zone.minPlayers||zone.capacity;
+  if(!members.length){hub.queues[zone.id].ends=0;continue}
   if(members.length>=minP){
+   for(const m of members){
+    if(m.botPromptedZone===zone.id||m.botChoice){m.botPromptedZone=null;m.botChoice=null;send(m.ws,{type:'bot_prompt_close'})}
+   }
    if(!hub.queues[zone.id].ends)hub.queues[zone.id].ends=Date.now()+QUEUE_DURATION;
    else if(members.length>=zone.capacity&&hub.queues[zone.id].ends-Date.now()>3000)hub.queues[zone.id].ends=Date.now()+3000;
-  }else hub.queues[zone.id].ends=0;
+  }else{
+   hub.queues[zone.id].ends=0;
+   if(members.every(m=>m.botChoice==='accept')){launchQueue(zone);continue}
+   let targetCount=zone.mode==='chaser'?Math.max(minP,members.length):zone.capacity;
+   for(const m of members){
+    if(!m.botChoice&&m.botPromptedZone!==zone.id){
+     m.botPromptedZone=zone.id;
+     send(m.ws,{type:'bot_prompt',zoneId:zone.id,mode:zone.mode||'classic',capacity:zone.capacity,currentCount:members.length,botsToAdd:targetCount-members.length});
+    }
+   }
+  }
  }
 }
-function leave(c){let room=rooms.get(c.code);if(!room)return;let departing=room.players.get(c.id);if(departing)dropNeoBall(room,departing);room.players.delete(c.id);if(room.mode==='neoball'&&room.phase==='match'&&room.players.size){let alive=[...room.players.values()],teams=new Set(alive.map(p=>p.team));if(teams.size===1)finish(room,alive[0].team)}if(room.mode==='chaser'&&room.phase==='match'&&departing){if(departing.team==='chaser')finish(room,'survivors');else if(![...room.players.values()].some(p=>p.team==='survivor'&&!p.eliminated))finish(room,'chaser')}if(room.mode==='hub'){updateHubQueues();sync(room)}else if(!room.players.size)rooms.delete(room.code);else sync(room);c.code=null}
+function leave(c){let room=rooms.get(c.code);if(!room)return;let departing=room.players.get(c.id);if(departing)dropNeoBall(room,departing);room.players.delete(c.id);let hasHumans=[...room.players.values()].some(p=>!p.isBot);if(room.mode!=='hub'&&!hasHumans){rooms.delete(room.code);c.code=null;return}if(room.mode==='neoball'&&room.phase==='match'&&room.players.size){let alive=[...room.players.values()],teams=new Set(alive.map(p=>p.team));if(teams.size===1)finish(room,alive[0].team)}if(room.mode==='chaser'&&room.phase==='match'&&departing){if(departing.team==='chaser')finish(room,'survivors');else if(![...room.players.values()].some(p=>p.team==='survivor'&&!p.eliminated))finish(room,'chaser')}if(room.mode==='hub'){updateHubQueues();sync(room)}else if(!room.players.size)rooms.delete(room.code);else sync(room);c.code=null}
 const server=http.createServer(async(req,res)=>{try{
  let path=req.url.split('?')[0];let file=/^\/assets\/[a-z0-9_]+\.glb$/.test(path)?path.slice(1):/^\/assets\/audio\/[a-z0-9_]+\.mp3$/.test(path)?path.slice(1):path==='/'||path==='/index.html'?'index.html':null;
  if(!file){res.writeHead(404);res.end('Not found');return}let data;try{data=await readFile(new URL('./'+file,import.meta.url))}catch(err){if(file.startsWith('assets/')&&err.code==='ENOENT'){let fallback=file.startsWith('assets/audio/')?file.slice('assets/audio/'.length):file.slice(7);try{data=await readFile(new URL('./'+fallback,import.meta.url))}catch(e){if(e.code==='ENOENT'){res.writeHead(404);res.end('Not found');return}throw e}}else if(err.code==='ENOENT'){res.writeHead(404);res.end('Not found');return}else throw err}
@@ -145,20 +206,32 @@ const wss=new WebSocketServer({server});
 wss.on('connection',ws=>{let c={id:randomUUID(),ws,code:null};clients.set(ws,c);send(ws,{type:'hello',id:c.id,weapons,outfits,weaponSkins});ws.on('message',raw=>{let m;try{m=JSON.parse(raw)}catch{return}if(!m||typeof m.type!=='string')return;
 if(m.type==='join'){if(c.code)return;let code=String(m.code||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,5);let room;
  if(!code&&!m.private){room=hub;code='HUB'}else{if(!code){do{code=randomInt(10000,100000).toString()}while(rooms.has(code));room={code,mode:'private',map:'colosseum',players:new Map(),phase:'lobby',ends:0,epoch:0,countdown:0,results:null};rooms.set(code,room)}else{room=rooms.get(code);if(!room||room.mode==='hub'){send(ws,{type:'error',text:'Комната не найдена'});return}}}
- if(room.phase==='lobby'&&room.countdown&&Date.now()>=room.countdown)start(room);
+ if(room.phase==='lobby'&&room.countdown&&Date.now()>=room.countdown)tryStartRoom(room);
  if(room.players.size>=(room.mode==='hub'?HUB_LIMIT:4)||room.phase!=='lobby'||room.locked){send(ws,{type:'error',text:room.mode==='hub'?'Общее лобби заполнено':'Комната заполнена или матч уже начался'});return}
  let name=String(m.name||'Игрок').trim().slice(0,20)||'Игрок';
  let look={...(presets[m.look?.character]||presets.shadow),outfit:'default',weaponSkin:'default'};
- let offset=room.mode==='hub'?((room.players.size%5)-2)*.8:0;let p={id:c.id,ws,name,look,x:offset,z:-8,y:0,flip:0,angle:0,hp:100,maxHp:100,eliminated:false,kills:0,deaths:0,ready:false,seated:false,weapon:'smg',coins:10000,owned:['smg','shotgun'],ownedOutfits:['default'],ownedWeaponSkins:['default'],lastShot:0,lastMove:Date.now(),moveCredit:2,moveSeq:0,spawnRev:0,respawnAt:0,invulnerableUntil:0,queue:null,vote:null};room.players.set(c.id,p);c.code=code;send(ws,{type:'joined',code,id:c.id});sync(room);return}
-let room=rooms.get(c.code),p=room?.players.get(c.id);if(!p)return;if(room.phase==='lobby'&&room.countdown&&Date.now()>=room.countdown)start(room);if(room.mode==='neoball'&&room.phase==='match')neoCheckClock(room);
+ let offset=room.mode==='hub'?((room.players.size%5)-2)*.8:0;let p={id:c.id,ws,name,look,x:offset,z:-8,y:0,flip:0,angle:0,hp:100,maxHp:100,eliminated:false,kills:0,deaths:0,ready:false,seated:false,weapon:'smg',coins:10000,owned:['smg','shotgun'],ownedOutfits:['default'],ownedWeaponSkins:['default'],lastShot:0,lastMove:Date.now(),moveCredit:2,moveSeq:0,spawnRev:0,respawnAt:0,invulnerableUntil:0,queue:null,vote:null,botChoice:null,botPromptedZone:null};room.players.set(c.id,p);c.code=code;send(ws,{type:'joined',code,id:c.id});sync(room);return}
+let room=rooms.get(c.code),p=room?.players.get(c.id);if(!p)return;if(room.phase==='lobby'&&room.countdown&&Date.now()>=room.countdown)tryStartRoom(room);if(room.mode==='neoball'&&room.phase==='match')neoCheckClock(room);
 if(m.type==='mapvote'&&room.mode==='voting'&&room.phase==='lobby'){if(['duct','colosseum','station','garden'].includes(m.map)){p.vote=m.map;sync(room)}return}
+if(m.type==='bot_choice'&&room.phase==='lobby'){
+ if(room.mode==='hub'){
+  let zone=HUB_ZONES.find(z=>z.id===p.queue);if(!zone)return;
+  p.botChoice=m.accept?'accept':'wait';
+  updateHubQueues();sync(room);
+ }else if(room.mode==='private'){
+  room.botPrompted=false;
+  if(m.accept){room.botConsent=true;start(room)}
+  else{room.botConsent=false;room.countdown=0;p.vote=null;sync(room)}
+ }
+ return;
+}
 if(m.type==='sit'&&room.phase==='lobby'){
  let hx=0,hz=room.mode==='hub'?11.78:6.2;
  if(m.seated){
   if(Math.hypot(p.x-hx,p.z-hz)<=3.5){
    let taken=[...room.players.values()].some(o=>o.id!==p.id&&o.seated);
    if(taken){send(ws,{type:'error',text:'Пульт капитана уже занят'});return}
-   p.seated=true;p.x=hx;p.z=hz;p.y=0;p.angle=Math.PI;p.queue=null;updateHubQueues();sync(room);
+   p.seated=true;p.x=hx;p.z=hz;p.y=0;p.angle=Math.PI;p.queue=null;p.botChoice=null;if(p.botPromptedZone){p.botPromptedZone=null;send(p.ws,{type:'bot_prompt_close'})}updateHubQueues();sync(room);
   }
  }else if(p.seated){p.seated=false;p.z=hz-1.2;sync(room)}
  return;
@@ -177,12 +250,12 @@ if(m.type==='weapon'&&p.owned.includes(m.weapon)){p.weapon=m.weapon;sync(room);r
 if(m.type==='buy'&&room.phase==='lobby'){let w=weapons[m.weapon];if(w&&w.price>0&&!p.owned.includes(m.weapon)&&p.coins>=w.price){p.coins-=w.price;p.owned.push(m.weapon);p.weapon=m.weapon;sync(room)}else send(ws,{type:'error',text:'Не хватает монет или оружие уже куплено'});return}
 if(m.type==='outfit'){let id=String(m.id||'');if(p.ownedOutfits.includes(id)){p.look={...p.look,outfit:id};sync(room);return}let item=outfits[id];if(room.phase==='lobby'&&item&&p.coins>=item.price){p.coins-=item.price;p.ownedOutfits.push(id);p.look={...p.look,outfit:id};sync(room)}else send(ws,{type:'error',text:room.phase!=='lobby'?'Покупка доступна только в лобби':'Не хватает монет'});return}
 if(m.type==='weapon_skin'){let id=String(m.id||'');if(p.ownedWeaponSkins.includes(id)){p.look={...p.look,weaponSkin:id};sync(room);return}let item=weaponSkins[id];if(room.phase==='lobby'&&item&&p.coins>=item.price){p.coins-=item.price;p.ownedWeaponSkins.push(id);p.look={...p.look,weaponSkin:id};sync(room)}else send(ws,{type:'error',text:room.phase!=='lobby'?'Покупка доступна только в лобби':'Не хватает монет'});return}
-if(m.type==='move'){if(room.phase==='ending'||room.phase==='results'||p.respawnAt||p.eliminated)return;if(Number.isInteger(m.epoch)&&m.epoch!==room.epoch)return;if(Number.isInteger(m.spawnRev)&&m.spawnRev!==p.spawnRev)return;let seq=Number.isSafeInteger(m.seq)?m.seq:p.moveSeq+1;if(seq<=p.moveSeq)return;p.moveSeq=seq;if(p.seated){p.angle=Number.isFinite(+m.angle)?+m.angle:p.angle;return}let x=Number(m.x),z=Number(m.z);if(!Number.isFinite(x)||!Number.isFinite(z))return;let now=Date.now(),delta=Math.min(1,Math.max(0,(now-p.lastMove)/1000));p.lastMove=now;p.moveCredit=Math.min(10,(p.moveCredit||0)+delta*19);let dx=x-p.x,dz=z-p.z,d=Math.hypot(dx,dz),max=p.moveCredit;if(d>max&&d>0){dx*=max/d;dz*=max/d}p.moveCredit=Math.max(0,p.moveCredit-Math.hypot(dx,dz));let oldY=p.y;p.y=Number.isFinite(+m.y)?Math.max(0,Math.min(8,+m.y)):0;let n=wallContact(p.x,p.z,mapPhase(room),p.y),mx=Number(m.ix)||0,mz=Number(m.iz)||0;let inputLength=Math.hypot(mx,mz);if(inputLength>1){mx/=inputLength;mz/=inputLength}p.wallSliding=!!(m.slide&&n&&groundHeight(p.x,p.z,p.y,mapPhase(room))===null&&p.y<=oldY+.04&&mx*n.x+mz*n.z<-.15);p.slideAt=now;if(groundHeight(p.x,p.z,p.y,mapPhase(room))!==null)p.lastKickWall=null;let constrained=constrainPosition(p.x+dx,p.z+dz,mapPhase(room),p.y);p.x=constrained.x;p.z=constrained.z;p.flip=Number.isFinite(+m.flip)?Math.max(0,Math.min(1,+m.flip)):0;p.angle=Number.isFinite(+m.angle)?+m.angle:0;if(room.mode==='neoball')neoUpdatePlayer(room,p);if(room.phase==='lobby'&&room.mode==='hub'){let zone=HUB_ZONES.find(z=>Math.hypot(p.x-z.x,p.z-z.z)<=z.radius);if(p.queue&&(!zone||p.queue!==zone.id))p.queue=null;if(!p.queue&&zone&&[...room.players.values()].filter(q=>q.queue===zone.id).length<zone.capacity)p.queue=zone.id;updateHubQueues()}else if(room.phase==='lobby'&&room.mode==='private'){let vote=voteAt(p.x,p.z);if(vote&&!room.countdown)room.countdown=now+LEGACY_VOTE_DURATION;if(vote!==p.vote){p.vote=vote;sync(room)}}return}
-if(m.type==='shoot'&&room.phase==='match'){
- if(p.respawnAt||p.eliminated)return;
- let w=weapons[p.weapon],now=Date.now();if(!w)return;let overclock=p.weapon==='smg'&&p.wallSliding&&now-p.slideAt<200,rate=overclock?w.rate*.75:w.rate;if(now-p.lastShot<rate)return;
- let aim=Number(m.angle),aimPitch=Number(m.pitch);if(!Number.isFinite(aim)||!Number.isFinite(aimPitch))return;p.lastShot=now;if(now<(p.invulnerableUntil||0)){p.invulnerableUntil=0;sync(room)}
- let airborne=groundHeight(p.x,p.z,p.y,mapPhase(room))===null,spread=p.weapon==='smg'?(overclock?.005:w.spread*(airborne?1.1:1)):w.spread*(airborne?1.8:1),hits=new Map();
+if(m.type==='move'){if(room.phase==='ending'||room.phase==='results'||p.respawnAt||p.eliminated)return;if(Number.isInteger(m.epoch)&&m.epoch!==room.epoch)return;if(Number.isInteger(m.spawnRev)&&m.spawnRev!==p.spawnRev)return;let seq=Number.isSafeInteger(m.seq)?m.seq:p.moveSeq+1;if(seq<=p.moveSeq)return;p.moveSeq=seq;if(p.seated){p.angle=Number.isFinite(+m.angle)?+m.angle:p.angle;return}let x=Number(m.x),z=Number(m.z);if(!Number.isFinite(x)||!Number.isFinite(z))return;let now=Date.now(),delta=Math.min(1,Math.max(0,(now-p.lastMove)/1000));p.lastMove=now;p.moveCredit=Math.min(10,(p.moveCredit||0)+delta*19);let dx=x-p.x,dz=z-p.z,d=Math.hypot(dx,dz),max=p.moveCredit;if(d>max&&d>0){dx*=max/d;dz*=max/d}p.moveCredit=Math.max(0,p.moveCredit-Math.hypot(dx,dz));let oldY=p.y;p.y=Number.isFinite(+m.y)?Math.max(0,Math.min(8,+m.y)):0;let n=wallContact(p.x,p.z,mapPhase(room),p.y),mx=Number(m.ix)||0,mz=Number(m.iz)||0;let inputLength=Math.hypot(mx,mz);if(inputLength>1){mx/=inputLength;mz/=inputLength}p.wallSliding=!!(m.slide&&n&&groundHeight(p.x,p.z,p.y,mapPhase(room))===null&&p.y<=oldY+.04&&mx*n.x+mz*n.z<-.15);p.slideAt=now;if(groundHeight(p.x,p.z,p.y,mapPhase(room))!==null)p.lastKickWall=null;let constrained=constrainPosition(p.x+dx,p.z+dz,mapPhase(room),p.y);p.x=constrained.x;p.z=constrained.z;p.flip=Number.isFinite(+m.flip)?Math.max(0,Math.min(1,+m.flip)):0;p.angle=Number.isFinite(+m.angle)?+m.angle:0;if(room.mode==='neoball')neoUpdatePlayer(room,p);if(room.phase==='lobby'&&room.mode==='hub'){let zone=HUB_ZONES.find(z=>Math.hypot(p.x-z.x,p.z-z.z)<=z.radius);if(p.queue&&(!zone||p.queue!==zone.id)){p.queue=null;p.botChoice=null;if(p.botPromptedZone){p.botPromptedZone=null;send(p.ws,{type:'bot_prompt_close'})}}if(!p.queue&&zone&&[...room.players.values()].filter(q=>q.queue===zone.id).length<zone.capacity)p.queue=zone.id;updateHubQueues()}else if(room.phase==='lobby'&&room.mode==='private'){let vote=voteAt(p.x,p.z);if(vote&&!room.countdown&&!room.botPrompted)room.countdown=now+LEGACY_VOTE_DURATION;if(vote!==p.vote){p.vote=vote;sync(room)}}return}
+function fireWeapon(room,p,aim,aimPitch,now,extraSpread=0){
+ let w=weapons[p.weapon];if(!w)return;
+ p.lastShot=now;if(now<(p.invulnerableUntil||0)){p.invulnerableUntil=0;sync(room)}
+ let airborne=groundHeight(p.x,p.z,p.y,mapPhase(room))===null,overclock=p.weapon==='smg'&&p.wallSliding&&now-p.slideAt<200;
+ let spread=(p.weapon==='smg'?(overclock?.005:w.spread*(airborne?1.1:1)):w.spread*(airborne?1.8:1))+extraSpread,hits=new Map();
  for(let pellet=0;pellet<(w.pellets||1);pellet++){
   let a=aim+(Math.random()-.5)*spread,pitch=Math.max(-1.15,Math.min(1.15,aimPitch+(Math.random()-.5)*spread)),cp=Math.cos(pitch),dx=Math.sin(a)*cp,dy=Math.sin(pitch),dz=-Math.cos(a)*cp,best=null,bestD=shotWallDistance(mapPhase(room),p.x,(p.y||0)+1.7,p.z,dx,dy,dz,w.range),headshot=false;
   for(let target of room.players.values()){
@@ -215,13 +288,146 @@ if(m.type==='shoot'&&room.phase==='match'){
     broadcast(room,{type:'notice',text:`${p.name} ⚡ ${best.name}`});
    }
   }
- }if(hits.size)sync(room);return
+ }if(hits.size)sync(room);
+}
+if(m.type==='shoot'&&room.phase==='match'){
+ if(p.respawnAt||p.eliminated)return;
+ let w=weapons[p.weapon],now=Date.now();if(!w)return;let overclock=p.weapon==='smg'&&p.wallSliding&&now-p.slideAt<200,rate=overclock?w.rate*.75:w.rate;if(now-p.lastShot<rate)return;
+ let aim=Number(m.angle),aimPitch=Number(m.pitch);if(!Number.isFinite(aim)||!Number.isFinite(aimPitch))return;
+ fireWeapon(room,p,aim,aimPitch,now,0);return
 }
 });ws.on('close',()=>{leave(c);clients.delete(ws)})});
-function launchQueue(zone){let members=[...hub.players.values()].filter(p=>p.queue===zone.id);let minP=zone.minPlayers||zone.capacity;if(members.length<minP||members.length>zone.capacity){hub.queues[zone.id].ends=0;return}let code;do{code=randomInt(10000,100000).toString()}while(rooms.has(code));let mode=zone.mode==='neoball'?'neoball':zone.mode==='chaser'?'chaser':'voting';let room={code,mode,locked:true,map:mode==='neoball'?'neoball':mode==='chaser'?'garden':'colosseum',players:new Map(),phase:'lobby',ends:0,epoch:1,countdown:(mode==='neoball'||mode==='chaser')?0:Date.now()+VOTE_DURATION,results:null};rooms.set(code,room);for(let [i,p] of members.entries()){hub.players.delete(p.id);p.queue=null;p.vote=null;p.seated=false;p.x=(i-1.5)*1.1;p.z=-7;p.y=0;p.flip=0;p.wallSliding=false;p.lastKickWall=null;p.respawnAt=0;p.eliminated=false;p.moveCredit=2;p.lastMove=Date.now();room.players.set(p.id,p);let c=clients.get(p.ws);if(c)c.code=code;send(p.ws,{type:'joined',code,id:p.id,transfer:true})}hub.queues[zone.id].ends=0;updateHubQueues();sync(hub);if(mode==='neoball'||mode==='chaser')start(room);else sync(room)}
-function returnToHub(room){for(const p of room.players.values()){if(hub.players.size>=HUB_LIMIT){let c=clients.get(p.ws);if(c)c.code=null;send(p.ws,{type:'left'});continue}p.x=((hub.players.size%5)-2)*.8;p.z=-8;p.y=0;p.flip=0;p.hp=100;p.maxHp=100;p.eliminated=false;p.ready=false;p.seated=false;p.queue=null;p.vote=null;p.team=null;p.respawnAt=0;p.moveCredit=2;p.lastMove=Date.now();p.invulnerableUntil=0;hub.players.set(p.id,p);let c=clients.get(p.ws);if(c)c.code='HUB';send(p.ws,{type:'joined',code:'HUB',id:p.id,transfer:true})}rooms.delete(room.code);sync(hub)}
+function neoNavTarget(bx,bz,tx,tz){
+ const gates=[{z:-38,x:11},{z:-19,x:-11},{z:19,x:11},{z:38,x:-11}];
+ if(tz>bz+1){
+  for(const g of gates)if(bz<g.z-1.2&&tz>g.z+1.2)return {x:g.x,z:g.z+2.2};
+ }else if(tz<bz-1){
+  for(let i=gates.length-1;i>=0;i--){let g=gates[i];if(bz>g.z+1.2&&tz<g.z-1.2)return {x:g.x,z:g.z-2.2}}
+ }
+ return {x:tx,z:tz};
+}
+function gardenNavTarget(bx,bz,tx,tz){
+ const houses=[
+  {cx:-10,cz:-4,minX:-13.6,maxX:-6.4,minZ:-7.6,maxZ:-0.4,doors:[[-10,-0.1],[-6.1,-4]]},
+  {cx:10,cz:4,minX:6.4,maxX:13.6,minZ:0.4,maxZ:7.6,doors:[[10,0.1],[6.1,4]]}
+ ];
+ for(const h of houses){
+  let bIn=bx>=h.minX&&bx<=h.maxX&&bz>=h.minZ&&bz<=h.maxZ;
+  let tIn=tx>=h.minX&&tx<=h.maxX&&tz>=h.minZ&&tz<=h.maxZ;
+  if(bIn!==tIn){
+   let best=h.doors[0],bd=Infinity;
+   for(const [dx,dz] of h.doors){let d=Math.hypot(dx-bx,dz-bz)+Math.hypot(tx-dx,tz-dz);if(d<bd){bd=d;best=[dx,dz]}}
+   if(Math.hypot(bx-best[0],bz-best[1])>1.1)return {x:best[0],z:best[1]};
+  }
+ }
+ return {x:tx,z:tz};
+}
+function tickBots(room,now,dt){
+ if(room.phase!=='match'||room.mode==='hub')return;
+ const phase=mapPhase(room);
+ const allPlayers=[...room.players.values()];
+ for(const bot of allPlayers){
+  if(!bot.isBot||bot.respawnAt||bot.eliminated)continue;
+  let ai=bot.ai||(bot.ai={strafeDir:1,strafeUntil:0,jumpAt:0,vy:0,wanderX:0,wanderZ:0,wanderUntil:0,stuckTicks:0});
+  if(now>ai.strafeUntil){ai.strafeDir=randomInt(0,2)?1:-1;ai.strafeUntil=now+1200+randomInt(0,1600)}
+  if(bot.y>0||ai.vy!==0){
+   let oldY=bot.y;ai.vy-=22*(ai.vy>0?1:2.3)*dt;
+   let nextY=bot.y+ai.vy*dt,land=ai.vy<0?landingHeight(bot.x,bot.z,oldY,nextY,phase):null;
+   if(land!==null){bot.y=land;ai.vy=0}else{bot.y=Math.max(0,nextY);if(bot.y===0)ai.vy=0}
+  }
+  let enemies=allPlayers.filter(o=>o.id!==bot.id&&!o.respawnAt&&!o.eliminated&&!((room.mode==='neoball'||(room.mode==='chaser'&&bot.team==='survivor'))&&o.team===bot.team));
+  let nearestEnemy=null,nearestDist=Infinity,visibleEnemy=null,visibleDist=Infinity;
+  for(const e of enemies){
+   let d=Math.hypot(e.x-bot.x,e.z-bot.z);
+   if(d<nearestDist){nearestDist=d;nearestEnemy=e}
+   let dy=(e.y||0)+1.2-(bot.y+1.7),d3=Math.hypot(e.x-bot.x,dy,e.z-bot.z)||1;
+   let wallD=shotWallDistance(phase,bot.x,bot.y+1.7,bot.z,(e.x-bot.x)/d3,dy/d3,(e.z-bot.z)/d3,d3);
+   if(wallD>=d3-.45&&d<visibleDist){visibleDist=d;visibleEnemy=e}
+  }
+  let goalX=bot.x,goalZ=bot.z,speed=room.mode==='chaser'?(bot.team==='chaser'?5.9:5.4):5.2;
+  if(room.mode==='neoball'&&room.neo){
+   let neo=room.neo,ball=neo.ball;
+   if(ball.holder===bot.id){
+    let nav=neoNavTarget(bot.x,bot.z,0,bot.team==='A'?56:-56);
+    goalX=nav.x;goalZ=nav.z;
+   }else if(!ball.holder&&!neo.resetAt){
+    let nav=neoNavTarget(bot.x,bot.z,ball.x,ball.z);
+    goalX=nav.x;goalZ=nav.z;
+   }else if(ball.holder){
+    let holder=room.players.get(ball.holder);
+    if(holder&&holder.team!==bot.team){let nav=neoNavTarget(bot.x,bot.z,holder.x,holder.z);goalX=nav.x;goalZ=nav.z}
+    else if(nearestEnemy){let nav=neoNavTarget(bot.x,bot.z,nearestEnemy.x,nearestEnemy.z);goalX=nav.x;goalZ=nav.z}
+   }else if(nearestEnemy){
+    let nav=neoNavTarget(bot.x,bot.z,nearestEnemy.x,nearestEnemy.z);goalX=nav.x;goalZ=nav.z;
+   }
+  }else if(room.mode==='chaser'){
+   if(bot.team==='chaser'&&nearestEnemy){
+    let nav=gardenNavTarget(bot.x,bot.z,nearestEnemy.x,nearestEnemy.z);goalX=nav.x;goalZ=nav.z;
+   }else if(bot.team==='survivor'&&nearestEnemy){
+    if(nearestDist<10.5){
+     let awayA=Math.atan2(bot.x-nearestEnemy.x,bot.z-nearestEnemy.z)+ai.strafeDir*.55;
+     goalX=bot.x+Math.sin(awayA)*8;goalZ=bot.z+Math.cos(awayA)*8;
+    }else if(nearestDist>18){
+     let nav=gardenNavTarget(bot.x,bot.z,nearestEnemy.x,nearestEnemy.z);goalX=nav.x;goalZ=nav.z;
+    }else{
+     let perpA=Math.atan2(nearestEnemy.z-bot.z,nearestEnemy.x-bot.x)+ai.strafeDir*Math.PI/2;
+     goalX=bot.x+Math.cos(perpA)*5;goalZ=bot.z+Math.sin(perpA)*5;
+    }
+   }
+  }else if(nearestEnemy){
+   let pref=bot.weapon==='shotgun'?6.5:11.5;
+   if(visibleEnemy&&visibleDist<pref*1.15&&visibleDist>pref*.55){
+    let perp=Math.atan2(visibleEnemy.z-bot.z,visibleEnemy.x-bot.x)+ai.strafeDir*Math.PI/2;
+    goalX=bot.x+Math.cos(perp)*4;goalZ=bot.z+Math.sin(perp)*4;
+   }else if(visibleEnemy&&visibleDist<=pref*.55){
+    let away=Math.atan2(bot.z-visibleEnemy.z,bot.x-visibleEnemy.x);
+    goalX=bot.x+Math.cos(away)*5;goalZ=bot.z+Math.sin(away)*5;
+   }else{
+    goalX=nearestEnemy.x;goalZ=nearestEnemy.z;
+   }
+  }else if(now>ai.wanderUntil){
+   ai.wanderX=(randomInt(-14,15));ai.wanderZ=(randomInt(-14,15));ai.wanderUntil=now+3000;
+   goalX=ai.wanderX;goalZ=ai.wanderZ;
+  }
+  let mdx=goalX-bot.x,mdz=goalZ-bot.z,md=Math.hypot(mdx,mdz);
+  if(md>.25){
+   let vx=(mdx/md)*speed,vz=(mdz/md)*speed;
+   let c=constrainPosition(bot.x+vx*dt,bot.z+vz*dt,phase,bot.y);
+   let moved=Math.hypot(c.x-bot.x,c.z-bot.z);
+   if(moved<speed*dt*.28){
+    ai.stuckTicks++;
+    if(ai.stuckTicks>=2){
+     ai.strafeDir*=-1;
+     let sideX=(-mdz/md)*ai.strafeDir,sideZ=(mdx/md)*ai.strafeDir;
+     c=constrainPosition(bot.x+sideX*speed*dt,bot.z+sideZ*speed*dt,phase,bot.y);
+     if(groundHeight(bot.x,bot.z,bot.y,phase)!==null&&now>ai.jumpAt){ai.vy=9;ai.jumpAt=now+1300}
+    }
+   }else ai.stuckTicks=0;
+   bot.x=c.x;bot.z=c.z;
+  }
+  if(room.mode==='neoball')neoUpdatePlayer(room,bot);
+  if(room.phase!=='match')return;
+  let aimTarget=visibleEnemy||nearestEnemy;
+  if(aimTarget){
+   bot.angle=Math.atan2(aimTarget.x-bot.x,-(aimTarget.z-bot.z));
+  }else if(md>.25){
+   bot.angle=Math.atan2(mdx,-mdz);
+  }
+  let w=weapons[bot.weapon];
+  let botRate=bot.weapon==='smg'?(room.mode==='chaser'&&bot.team==='chaser'?270:230):1050;
+  if(visibleEnemy&&w&&visibleDist<w.range&&now-bot.lastShot>=botRate&&now>=(bot.invulnerableUntil||0)-1500&&now>=(visibleEnemy.invulnerableUntil||0)){
+   let dx=visibleEnemy.x-bot.x,dy=(visibleEnemy.y||0)+1.2-(bot.y+1.7),dz=visibleEnemy.z-bot.z;
+   let aim=Math.atan2(dx,-dz),horiz=Math.hypot(dx,dz)||1,aimPitch=Math.max(-1.1,Math.min(1.1,Math.atan2(dy,horiz)));
+   fireWeapon(room,bot,aim,aimPitch,now,bot.weapon==='smg'?.095:.055);
+   if(room.phase!=='match')return;
+  }
+ }
+}
+function launchQueue(zone){let members=[...hub.players.values()].filter(p=>p.queue===zone.id);if(members.length<1||members.length>zone.capacity){hub.queues[zone.id].ends=0;return}let code;do{code=randomInt(10000,100000).toString()}while(rooms.has(code));let mode=zone.mode==='neoball'?'neoball':zone.mode==='chaser'?'chaser':'voting';let room={code,mode,locked:true,map:mode==='neoball'?'neoball':mode==='chaser'?'garden':'colosseum',players:new Map(),phase:'lobby',ends:0,epoch:1,countdown:(mode==='neoball'||mode==='chaser')?0:Date.now()+VOTE_DURATION,results:null};rooms.set(code,room);for(let [i,p] of members.entries()){hub.players.delete(p.id);p.queue=null;p.vote=null;p.botChoice=null;p.botPromptedZone=null;p.seated=false;p.x=(i-1.5)*1.1;p.z=-7;p.y=0;p.flip=0;p.wallSliding=false;p.lastKickWall=null;p.respawnAt=0;p.eliminated=false;p.moveCredit=2;p.lastMove=Date.now();room.players.set(p.id,p);let c=clients.get(p.ws);if(c)c.code=code;send(p.ws,{type:'joined',code,id:p.id,transfer:true})}let targetCount=zone.mode==='chaser'?Math.max(zone.minPlayers||3,members.length):zone.capacity;fillRoomBots(room,targetCount);hub.queues[zone.id].ends=0;updateHubQueues();sync(hub);if(mode==='neoball'||mode==='chaser')start(room);else sync(room)}
+function returnToHub(room){for(const p of room.players.values()){if(p.isBot)continue;if(hub.players.size>=HUB_LIMIT){let c=clients.get(p.ws);if(c)c.code=null;send(p.ws,{type:'left'});continue}p.x=((hub.players.size%5)-2)*.8;p.z=-8;p.y=0;p.flip=0;p.hp=100;p.maxHp=100;p.eliminated=false;p.ready=false;p.seated=false;p.queue=null;p.vote=null;p.botChoice=null;p.botPromptedZone=null;p.team=null;p.respawnAt=0;p.moveCredit=2;p.lastMove=Date.now();p.invulnerableUntil=0;hub.players.set(p.id,p);let c=clients.get(p.ws);if(c)c.code='HUB';send(p.ws,{type:'joined',code:'HUB',id:p.id,transfer:true})}rooms.delete(room.code);sync(hub)}
+let tickCount=0;
 setInterval(()=>{
- let now=Date.now();
+ let now=Date.now();tickCount++;
  updateHubQueues();
  for(const zone of HUB_ZONES)if(hub.queues[zone.id].ends&&now>=hub.queues[zone.id].ends)launchQueue(zone);
  for(const room of rooms.values()){
@@ -235,15 +441,16 @@ setInterval(()=>{
      send(pl.ws,{type:'respawn',x:pl.x,z:pl.z,spawnRev:pl.spawnRev,invulnerableUntil:pl.invulnerableUntil});
     }
    }
+   tickBots(room,now,.1);
   }
-  if(room.phase==='lobby'&&room.countdown&&now>=room.countdown)start(room);
+  if(room.phase==='lobby'&&room.countdown&&now>=room.countdown)tryStartRoom(room);
   else if(room.phase==='match'&&room.mode==='neoball'){if(room.neo.resetAt&&now>=room.neo.resetAt){room.neo.resetAt=0;room.neo.ball={status:'center',holder:null,x:0,y:0,z:0};broadcast(room,{type:'notice',text:'МЯЧ В ЦЕНТРЕ!'})}neoCheckClock(room,now);if(room.phase==='match'&&room.neo.ball.holder){let holder=room.players.get(room.neo.ball.holder);if(holder)neoUpdatePlayer(room,holder)}if(room.phase==='match')sync(room)}
   else if(room.phase==='match'&&now>=room.ends)finish(room,room.mode==='chaser'?'survivors':null);
   else if(room.phase==='ending'&&now>=room.ends){room.phase='results';room.ends=now+15000;sync(room)}
   else if(room.phase==='results'&&now>=room.ends&&(room.mode==='voting'||room.mode==='neoball'||room.mode==='chaser')){returnToHub(room)}
-  else if(room.phase==='results'&&now>=room.ends){room.phase='lobby';room.epoch++;room.ends=0;room.countdown=0;room.results=null;for(const p of room.players.values()){p.x=0;p.z=-7;p.y=0;p.flip=0;p.hp=100;p.maxHp=100;p.eliminated=false;p.ready=false;p.seated=false;p.vote=null;p.respawnAt=0}sync(room)}
-  else sync(room)
+  else if(room.phase==='results'&&now>=room.ends){room.phase='lobby';room.epoch++;room.ends=0;room.countdown=0;room.results=null;room.botConsent=false;room.botPrompted=false;for(const [id,p] of [...room.players.entries()]){if(p.isBot){room.players.delete(id);continue}p.x=0;p.z=-7;p.y=0;p.flip=0;p.hp=100;p.maxHp=100;p.eliminated=false;p.ready=false;p.seated=false;p.vote=null;p.respawnAt=0}sync(room)}
+  else if(room.phase==='match'||tickCount%2===0)sync(room)
  }
-},200);
+},100);
 const port = Number(process.env.PORT) || 3001;
 server.listen(port,'0.0.0.0',()=>console.log(`Arena server on ${port}`));
