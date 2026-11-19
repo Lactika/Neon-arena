@@ -24,24 +24,23 @@ export function shotWallDistance(phase,ox,oy,oz,dx,dy,dz,maxDistance){
  return nearest;
 }
 // Neo-ball: solid volumes are the single source of truth for rendered cover, ray hits and wall kicks.
-export const NEO_BLOCKS=[
- {x:-6.5,z:0,hx:.7,hz:3.2,h:3.6,kind:'bulkhead'},{x:6.5,z:0,hx:.7,hz:3.2,h:3.6,kind:'bulkhead'},
- {x:-4.8,z:-7.5,hx:1.1,hz:1.2,h:1.45,kind:'crate'},{x:4.8,z:7.5,hx:1.1,hz:1.2,h:1.45,kind:'crate'},
- {x:4.8,z:-7.5,hx:1.1,hz:1.2,h:1.45,kind:'crate'},{x:-4.8,z:7.5,hx:1.1,hz:1.2,h:1.45,kind:'crate'},
- {x:-10,z:0,hx:1.4,hz:2,h:2.4,kind:'platform'},{x:10,z:0,hx:1.4,hz:2,h:2.4,kind:'platform'},
- {x:0,z:-6,hx:3,hz:1,h:3.3,bottom:3,kind:'catwalk'},{x:0,z:6,hx:3,hz:1,h:3.3,bottom:3,kind:'catwalk'},
- {x:-10,z:-4.75,hx:1.2,hz:.55,h:.65,kind:'step'},{x:-10,z:-3.15,hx:1.2,hz:.4,h:1.3,kind:'step'},
- {x:10,z:4.75,hx:1.2,hz:.55,h:.65,kind:'step'},{x:10,z:3.15,hx:1.2,hz:.4,h:1.3,kind:'step'},
- {x:-12,z:-9,hx:.9,hz:.9,h:6.3,kind:'pipe'},{x:12,z:-9,hx:.9,hz:.9,h:6.3,kind:'pipe'},
- {x:-12,z:9,hx:.9,hz:.9,h:6.3,kind:'pipe'},{x:12,z:9,hx:.9,hz:.9,h:6.3,kind:'pipe'},
- {x:-3.3,z:-17,hx:1.45,hz:.4,h:4.4,kind:'trailer'},{x:3.3,z:-17,hx:1.45,hz:.4,h:4.4,kind:'trailer'},
- {x:-3.3,z:17,hx:1.45,hz:.4,h:4.4,kind:'trailer'},{x:3.3,z:17,hx:1.45,hz:.4,h:4.4,kind:'trailer'},
- {x:-1.8,z:-16.52,hx:.06,hz:.08,h:4.05,kind:'goalpost'},{x:1.8,z:-16.52,hx:.06,hz:.08,h:4.05,kind:'goalpost'},
- {x:-1.8,z:16.52,hx:.06,hz:.08,h:4.05,kind:'goalpost'},{x:1.8,z:16.52,hx:.06,hz:.08,h:4.05,kind:'goalpost'},
- {x:0,z:-16.52,hx:1.8,hz:.09,bottom:3.97,h:4.13,kind:'goalpost'},{x:0,z:16.52,hx:1.8,hz:.09,bottom:3.97,h:4.13,kind:'goalpost'}
+export const NEO_BLOCKS = [
+ // Alternating full-height bulkheads force a winding route, with generous openings.
+ {x:-4,z:-38,hx:11,hz:.6,h:12,kind:'turn'},
+ {x:4,z:-19,hx:11,hz:.6,h:12,kind:'turn'},
+ {x:-4,z:19,hx:11,hz:.6,h:12,kind:'turn'},
+ {x:4,z:38,hx:11,hz:.6,h:12,kind:'turn'},
+ // Cover in each section leaves the central route and the turns open.
+ ...[-52,-28,0,28,52].flatMap(z=>[
+  {x:-10,z,hx:1.3,hz:1.3,h:2.3,kind:'crate'},
+  {x:10,z,hx:1.3,hz:1.3,h:2.3,kind:'crate'}]),
+ ...[-1,1].flatMap(side=>[
+  {x:-3.5,z:side*62,hx:1.5,hz:.5,h:4.4,kind:'trailer'},
+  {x:3.5,z:side*62,hx:1.5,hz:.5,h:4.4,kind:'trailer'},
+  {x:-1.8,z:side*61,hx:.08,hz:.12,h:4.05,kind:'goalpost'},
+  {x:1.8,z:side*61,hx:.08,hz:.12,h:4.05,kind:'goalpost'},
+  {x:0,z:side*61,hx:1.8,hz:.12,bottom:3.97,h:4.13,kind:'goalpost'}])
 ];
-// Neo-ball is twice as long along the Z axis, including collision geometry.
-for(const b of NEO_BLOCKS){b.z*=2;b.hz*=2}
 export const HUB_ZONES=[{id:'neo2',mode:'neoball',capacity:2,x:-8,z:-11,radius:2.3},{id:'neo4',mode:'neoball',capacity:4,x:8,z:-11,radius:2.3},{id:'duo',capacity:2,x:-8,z:3,radius:2.3},{id:'trio',capacity:3,x:0,z:3,radius:2.3},{id:'squad',capacity:4,x:8,z:3,radius:2.3}];
 export const VOTE_ZONES=[{id:'duct',x:-5,z:0,radius:2.1},{id:'colosseum',x:0,z:0,radius:2.1},{id:'station',x:5,z:0,radius:2.1}];
 export function voteAt(x,z){return VOTE_ZONES.find(v=>Math.hypot(x-v.x,z-v.z)<=v.radius)?.id||null}
@@ -52,7 +51,7 @@ export function constrainPosition(x,z,phase,y=0){
  if(phase==='lobby'||phase==='hub'){
   let edge=phase==='hub'?15.65:8.25;x=Math.max(-edge,Math.min(edge,x));z=Math.max(-edge,Math.min(edge,z));
  }else{
-  if(phase==='duct'||phase==='station'||phase==='neoball'){x=Math.max(-14.5,Math.min(14.5,x));let zEdge=phase==='neoball'?35:17.5;z=Math.max(-zEdge,Math.min(zEdge,z))}else{let d=Math.hypot(x/ARENA_RX,z/ARENA_RZ);if(d>1){x/=d;z/=d}}
+  if(phase==='duct'||phase==='station'||phase==='neoball'){x=Math.max(-14.5,Math.min(14.5,x));let zEdge=phase==='neoball'?70:17.5;z=Math.max(-zEdge,Math.min(zEdge,z))}else{let d=Math.hypot(x/ARENA_RX,z/ARENA_RZ);if(d>1){x/=d;z/=d}}
   for(const b of blocksFor(phase)){if(y>=b.h-.02||(b.bottom&&y+1.7<=b.bottom))continue;let dx=x-b.x,dz=z-b.z,ex=b.hx+.32,ez=b.hz+.32;if(Math.abs(dx)<ex&&Math.abs(dz)<ez){if(ex-Math.abs(dx)<ez-Math.abs(dz))x=b.x+(dx>=0?ex:-ex);else z=b.z+(dz>=0?ez:-ez)}}
   if(phase!=='duct'&&phase!=='station'&&phase!=='neoball'&&y<1.4)for(let [cx,cz,r] of covers){let dx=x-cx,dz=z-cz,d=Math.hypot(dx,dz);if(d<r){if(d<.001){dx=r;dz=0;d=r}x=cx+dx*r/d;z=cz+dz*r/d}}
  }
@@ -64,7 +63,7 @@ export function wallContact(x,z,phase,y=0){
   return dx<dz?{x:-Math.sign(x),z:0,id:'lobby-x-'+Math.sign(x)}:{x:0,z:-Math.sign(z),id:'lobby-z-'+Math.sign(z)};
  }
  for(const [i,b] of blocksFor(phase).entries()){if(y>=b.h-.02||(b.bottom&&y+1.7<=b.bottom))continue;let dx=x-b.x,dz=z-b.z,ex=b.hx+.32,ez=b.hz+.32;if(Math.abs(dx)<=ex+.35&&Math.abs(dz)<=ez+.35){let diffX=Math.abs(Math.abs(dx)-ex),diffZ=Math.abs(Math.abs(dz)-ez);if(diffX<.35&&diffX<=diffZ)return {x:Math.sign(dx)||1,z:0,id:phase+'-block-'+i};if(diffZ<.35)return {x:0,z:Math.sign(dz)||1,id:phase+'-block-'+i}}}
- if(phase==='duct'||phase==='station'||phase==='neoball'){let dx=14.5-Math.abs(x),dz=(phase==='neoball'?35:17.5)-Math.abs(z);if(Math.min(dx,dz)>.38)return null;return dx<dz?{x:-Math.sign(x),z:0,id:phase+'-x-'+Math.sign(x)}:{x:0,z:-Math.sign(z),id:phase+'-z-'+Math.sign(z)}}
+ if(phase==='duct'||phase==='station'||phase==='neoball'){let dx=14.5-Math.abs(x),dz=(phase==='neoball'?70:17.5)-Math.abs(z);if(Math.min(dx,dz)>.38)return null;return dx<dz?{x:-Math.sign(x),z:0,id:phase+'-x-'+Math.sign(x)}:{x:0,z:-Math.sign(z),id:phase+'-z-'+Math.sign(z)}}
  if(y<1.4){for(let [i,[cx,cz,r]] of covers.entries()){let dx=x-cx,dz=z-cz,d=Math.hypot(dx,dz);if(d>.0001&&Math.abs(d-r)<=.35)return {x:dx/d,z:dz/d,id:'cover-'+i}}}
  const q=Math.hypot(x/ARENA_RX,z/ARENA_RZ);if(q===0)return null;
  const nx=x/(ARENA_RX*ARENA_RX),nz=z/(ARENA_RZ*ARENA_RZ),n=Math.hypot(nx,nz);
