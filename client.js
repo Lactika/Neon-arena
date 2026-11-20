@@ -10,6 +10,44 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { constrainPosition, wallContact, wallSlideVelocity, JumpWindow, WallKickLock, ARENA_RX, ARENA_RZ, VERTICAL_BLOCKS, DUCT_BLOCKS, STATION_BLOCKS, NEO_BLOCKS, GARDEN_BLOCKS, DESTRUCTIBLE_PRESETS, CONTROL_POINT, VOTE_ZONES, HUB_ZONES, groundHeight, landingHeight, shotWallDistance } from './physics.js';
 const $=s=>document.querySelector(s), menu=$('#menu'), hud=$('#hud');
 const isMobile=/Android|iPhone|iPad|iPod|Mobile|Telegram/i.test(navigator.userAgent)||(navigator.maxTouchPoints>1&&Math.min(innerWidth,innerHeight)<900);
+let userLandscapeOverride=null;
+function isForcedLandscape(){
+ if(!isMobile||innerWidth>=innerHeight)return false;
+ if(userLandscapeOverride===false)return false;
+ return userLandscapeOverride===true||document.documentElement.classList.contains('in-game');
+}
+function viewW(){return Math.max(1,isForcedLandscape()?innerHeight:innerWidth)}
+function viewH(){return Math.max(1,isForcedLandscape()?innerWidth:innerHeight)}
+function pointerXY(e){
+ if(!isForcedLandscape())return {x:e.clientX,y:e.clientY};
+ return {x:e.clientY,y:innerWidth-e.clientX};
+}
+function syncRendererSize(){
+ if(typeof camera==='undefined'||typeof renderer==='undefined')return;
+ let w=viewW(),h=viewH();
+ camera.aspect=w/h;camera.updateProjectionMatrix();
+ renderer.setSize(w,h);
+ if(typeof composer!=='undefined')composer.setSize(w,h);
+}
+function syncOrientationLayout(){
+ document.documentElement.style.setProperty('--real-w',innerWidth+'px');
+ document.documentElement.style.setProperty('--real-h',innerHeight+'px');
+ if(innerWidth>innerHeight&&userLandscapeOverride===true)userLandscapeOverride=null;
+ document.documentElement.classList.toggle('force-landscape',isForcedLandscape());
+ updateTelegramInsets();
+ syncRendererSize();
+}
+async function tryNativeLandscape(){
+ try{
+  const tg=window.Telegram?.WebApp;
+  tg?.unlockOrientation?.();
+  if(tg?.requestFullscreen&&!tg?.isFullscreen)tg.requestFullscreen();
+  else if(!document.fullscreenElement&&document.documentElement.requestFullscreen){
+   await document.documentElement.requestFullscreen().catch(()=>{});
+  }
+  await screen.orientation?.lock?.('landscape').catch(()=>{});
+ }catch{}
+}
 if(typeof CanvasRenderingContext2D!=='undefined'&&!CanvasRenderingContext2D.prototype.roundRect){
  CanvasRenderingContext2D.prototype.roundRect=function(x,y,w,h,r=0){r=Math.min(r,w/2,h/2);this.moveTo(x+r,y);this.arcTo(x+w,y,x+w,y+h,r);this.arcTo(x+w,y+h,x,y+h,r);this.arcTo(x,y+h,x,y,r);this.arcTo(x,y,x+w,y,r);this.closePath();return this};
 }
@@ -24,12 +62,20 @@ function updateTelegramInsets(){
 }
 function initTelegram(){
  const tg=window.Telegram?.WebApp;
- try{tg?.ready();tg?.expand();tg?.lockOrientation?.('landscape');tg?.onEvent?.('safeAreaChanged',updateTelegramInsets);tg?.onEvent?.('contentSafeAreaChanged',updateTelegramInsets)}catch{}
- updateTelegramInsets();
+ try{
+  tg?.ready();tg?.expand();
+  tg?.unlockOrientation?.();
+  tg?.onEvent?.('safeAreaChanged',updateTelegramInsets);
+  tg?.onEvent?.('contentSafeAreaChanged',updateTelegramInsets);
+  tg?.onEvent?.('viewportChanged',syncOrientationLayout);
+  tg?.onEvent?.('fullscreenChanged',syncOrientationLayout);
+ }catch{}
+ syncOrientationLayout();
  const user=tg?.initDataUnsafe?.user;
  if(user&&!$('#name').value)$('#name').value=user.username?'@'+user.username:user.first_name||'';
 }
 initTelegram();document.addEventListener('DOMContentLoaded',initTelegram);
+window.addEventListener('orientationchange',()=>setTimeout(syncOrientationLayout,80));
 let refreshPreview=()=>{}, previewRenderer=null, previewScene, previewCamera, previewFigure;
 const validHeroes=['shadow','viper','blitz','skye','yoru','celeste','noch','ari','ben'];
 const heroDefaultRoles={shadow:'dps',viper:'dps',blitz:'dps',skye:'support',yoru:'dps',celeste:'support',noch:'tank',ari:'support',ben:'tank'};
@@ -112,11 +158,21 @@ bindModalBackdrop($('#bot-consent-modal'),dismissBotPrompt);
 let ws,me,room=null,defs={},outfitDefs={},weaponSkinDefs={},shopTab='weapons',players=new Map(),connected=false,angle=0,pitch=0,zoom=false,keys={},joy={x:0,y:0},firing=false,lastSend=0,lastFire=0,noticeTimer=0,phase='lobby',audio=null,musicTimer=null,resultsOpen=false, jumpY=0,jumpV=0,impulseX=0,impulseZ=0,flipTime=0,lastWall=0,lastWallSlideFx=0, countdownEnd=0,endingAt=0,endingDigit=null,moveVX=0,moveVZ=0,walkCycle=0,landing=0,recoil=0,roomEpoch=0,moveSeq=0,flash=0,hitTime=0,lastDash=-10000,dashCharges=2,dashNextAt=0,screenShake=0,myRespawnUntil=0,wasServerDead=false;
 const jumpWindow=new JumpWindow(130),wallLock=new WallKickLock();let jumpPointer=null,wallCarry=0;
 function resetJump(){wallLock.land();wallCarry=0;currentSlide=false;jumpY=0;jumpV=0;jumpWindow.reset();jumpPointer=null}
-function setGameGestures(enabled){document.documentElement.classList.toggle('in-game',enabled);try{let tg=window.Telegram?.WebApp;if(enabled){tg?.disableVerticalSwipes?.();tg?.lockOrientation?.('landscape')}else tg?.enableVerticalSwipes?.()}catch{}}
+function setGameGestures(enabled){
+ document.documentElement.classList.toggle('in-game',enabled);
+ try{
+  let tg=window.Telegram?.WebApp;
+  if(enabled){tg?.disableVerticalSwipes?.();tg?.unlockOrientation?.()}
+  else{tg?.enableVerticalSwipes?.();if(userLandscapeOverride===false)userLandscapeOverride=null}
+ }catch{}
+ syncOrientationLayout();
+}
 function clearPlayerSprites(o){scene.remove(o.mesh);if(o.healthSprite){scene.remove(o.healthSprite);o.healthSprite.material.map.dispose();o.healthSprite.material.dispose()}if(o.nameSprite){scene.remove(o.nameSprite);o.nameSprite.material.map.dispose();o.nameSprite.material.dispose()}}
 function connect(){ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);ws.onopen=()=>{connected=true;$('#menumsg').textContent='Сервер подключён. Приветственный бонус: 10 000 монет!' };ws.onerror=()=>{if(!connected)$('#menumsg').textContent='Ошибка связи с игровым сервером.'};ws.onclose=()=>{connected=false;$('#menumsg').textContent='Нет связи с игровым сервером. Проверьте, что запущен Node.js сервер с WebSocket.';if(room){room=null;myRespawnUntil=0;wasServerDead=false;spectateId=null;chaserSnapshot=null;chaserBannerUntil=0;scytheSwing=0;mapVoteDismissedEpoch=-1;resultsDismissedEpoch=-1;destructiblesState=[];controlState=null;teamUpsState=[];sanctuariesState=[];resetInputs();closeBotPrompt();$('#chaser-banner').classList.add('hide');$('#spectator-hud').classList.add('hide');$('#respawn-overlay').classList.add('hide');$('#end-transition').classList.add('hide');roomMode='private';$('#map-vote-modal').classList.add('hide');setGameGestures(false);if(previewRenderer){previewRenderer.setSize(180,180,false);refreshPreview()}refreshWorld();menu.classList.remove('hide');hud.classList.add('hide');$('#shop').classList.add('hide');$('#results').classList.add('hide');$('#menumsg').textContent='Связь с сервером потеряна. Обновите страницу.';stopMusic();syncMusic()}};ws.onmessage=e=>{try{let m=JSON.parse(e.data);if(m.type==='hello'){me=m.id;defs=m.weapons||{};outfitDefs=m.outfits||{};weaponSkinDefs=m.weaponSkins||{};roleDefs=m.roleDefs||{}}else if(m.type==='joined'){if(m.transfer){$('#shop').classList.add('hide');for(const o of players.values())clearPlayerSprites(o);players.clear();moveVX=moveVZ=impulseX=impulseZ=0;flipTime=0}myRespawnUntil=0;wasServerDead=false;spectateId=null;chaserSnapshot=null;chaserBannerUntil=0;scytheSwing=0;mapVoteDismissedEpoch=-1;resultsDismissedEpoch=-1;destructiblesState=[];controlState=null;teamUpsState=[];sanctuariesState=[];dashCharges=2;dashNextAt=0;resetInputs();closeBotPrompt();$('#chaser-banner').classList.add('hide');$('#spectator-hud').classList.add('hide');$('#respawn-overlay').classList.add('hide');resetJump();room=m.code;if(previewRenderer)previewRenderer.setSize(1,1,false);syncMusic();setGameGestures(true);angle=Math.PI;pitch=0;refreshWorld();menu.classList.add('hide');hud.classList.remove('hide')}else if(m.type==='left'){myRespawnUntil=0;wasServerDead=false;spectateId=null;chaserSnapshot=null;chaserBannerUntil=0;scytheSwing=0;mapVoteDismissedEpoch=-1;resultsDismissedEpoch=-1;destructiblesState=[];controlState=null;teamUpsState=[];sanctuariesState=[];resetInputs();closeBotPrompt();$('#chaser-banner').classList.add('hide');$('#spectator-hud').classList.add('hide');$('#respawn-overlay').classList.add('hide');resetJump();$('#end-transition').classList.add('hide');room=null;roomMode='private';$('#map-vote-modal').classList.add('hide');setGameGestures(false);if(previewRenderer){previewRenderer.setSize(180,180,false);refreshPreview()}refreshWorld();menu.classList.remove('hide');hud.classList.add('hide');$('#shop').classList.add('hide');$('#results').classList.add('hide');stopMusic();syncMusic();for(let p of players.values())clearPlayerSprites(p);players.clear()}else if(m.type==='error'){$('#menumsg').textContent=m.text;showNotice(m.text)}else if(m.type==='notice')showNotice(m.text);else if(m.type==='bot_prompt')openBotPrompt(m);else if(m.type==='bot_prompt_close')closeBotPrompt();else if(m.type==='chaser_assigned'){triggerChaserBanner(m)}else if(m.type==='chaser_slash'){showChaserSlash(m)}else if(m.type==='respawn'){myRespawnUntil=0;wasServerDead=false;$('#respawn-overlay').classList.add('hide');let p=players.get(me);if(p){p.x=m.x;p.z=m.z;p.data.spawnRev=m.spawnRev;p.data.respawnAt=0;moveVX=0;moveVZ=0;resetJump();impulseX=0;impulseZ=0;p.mesh.position.set(m.x,0,m.z)}}else if(m.type==='wallbounce'){if(m.id!==me)wallSparks(m.x,m.y,m.z,m.nx,m.nz)}else if(m.type==='hyperdrive'){triggerHyperdrive(m.sector,m.duration,m.by)}else if(m.type==='destructible_hit'){handleDestructibleHit(m)}else if(m.type==='ability_fx'){handleAbilityFX(m)}else if(m.type==='shot')trace(m);else if(m.type==='hit')showHit(m);else if(m.type==='death')showDeath(m);else if(m.type==='state')applyState(m)}catch(err){console.error('WS message error:',err)}}}connect();
-async function fullscreen(){try{const tg=window.Telegram?.WebApp;if(tg?.requestFullscreen){tg.requestFullscreen();return}if(document.fullscreenElement){await document.exitFullscreen();return}if(document.documentElement.requestFullscreen){await document.documentElement.requestFullscreen();return}tg?.expand?.();showNotice('Разверните окно Telegram на весь экран')}catch{showNotice('Полный экран недоступен в этом браузере')}}$('#fullscreen').onclick=fullscreen;$('#fullscreen-menu').onclick=fullscreen;
-function send(m){if(connected)ws.send(JSON.stringify(m))}function join(code,priv=false){if(!connected){if(!ws||ws.readyState===WebSocket.CLOSED)connect();$('#menumsg').textContent='Нет связи с игровым сервером. Повторное подключение…';return}send({type:'join',code,name:$('#name').value,look,private:priv});initAudio()}$('#create').onclick=()=>join('');$('#create-private').onclick=()=>join('',true);$('#join').onclick=()=>{const code=$('#code').value.trim();if(!code){$('#menumsg').textContent='Введите код комнаты';return}join(code)};$('#leave').onclick=()=>send({type:'leave'});
+async function fullscreen(){try{const tg=window.Telegram?.WebApp;await tryNativeLandscape();if(tg?.requestFullscreen){tg.requestFullscreen();return}if(document.fullscreenElement){await document.exitFullscreen();return}if(document.documentElement.requestFullscreen){await document.documentElement.requestFullscreen();await screen.orientation?.lock?.('landscape').catch(()=>{});return}tg?.expand?.();showNotice('Разверните окно Telegram на весь экран')}catch{showNotice('Полный экран недоступен в этом браузере')}}$('#fullscreen').onclick=fullscreen;$('#fullscreen-menu').onclick=fullscreen;
+$('#rotate-hint').onclick=()=>{tryNativeLandscape();userLandscapeOverride=true;syncOrientationLayout()};
+$('#rotate-btn').onclick=()=>{if(isForcedLandscape()){userLandscapeOverride=false}else{tryNativeLandscape();userLandscapeOverride=true}syncOrientationLayout()};
+function send(m){if(connected)ws.send(JSON.stringify(m))}function join(code,priv=false){if(!connected){if(!ws||ws.readyState===WebSocket.CLOSED)connect();$('#menumsg').textContent='Нет связи с игровым сервером. Повторное подключение…';return}if(isMobile)tryNativeLandscape();send({type:'join',code,name:$('#name').value,look,private:priv});initAudio()}$('#create').onclick=()=>join('');$('#create-private').onclick=()=>join('',true);$('#join').onclick=()=>{const code=$('#code').value.trim();if(!code){$('#menumsg').textContent='Введите код комнаты';return}join(code)};$('#leave').onclick=()=>send({type:'leave'});
 function closeShop(){$('#shop').classList.add('hide');syncMusic()}
 function closeMapVote(){mapVoteDismissedEpoch=roomEpoch;$('#map-vote-modal').classList.add('hide')}
 function closeResults(){resultsDismissedEpoch=roomEpoch;$('#results').classList.add('hide')}
@@ -126,7 +182,7 @@ $('#closeResults').onclick=closeResults;bindModalBackdrop($('#results'),closeRes
 document.addEventListener('click',e=>{let d=document.querySelector('.menu-details');if(d?.open&&!d.contains(e.target))d.open=false});
 window.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(!$('#bot-consent-modal').classList.contains('hide'))dismissBotPrompt();else if(!$('#shop').classList.contains('hide'))closeShop();else if(!$('#map-vote-modal').classList.contains('hide'))closeMapVote();else if(!$('#results').classList.contains('hide'))closeResults()});
 for(const tabBtn of document.querySelectorAll('.shop-tab'))tabBtn.addEventListener('click',()=>{shopTab=tabBtn.dataset.tab;for(const b of document.querySelectorAll('.shop-tab'))b.classList.toggle('active',b===tabBtn);$('#items').dataset.signature='';renderShop()});
-const scene=new THREE.Scene();scene.background=new THREE.Color(0x171834);scene.fog=new THREE.Fog(0x171834,45,115);const camera=new THREE.PerspectiveCamera(55,Math.max(1,innerWidth)/Math.max(1,innerHeight),.1,150);const renderer=new THREE.WebGLRenderer({antialias:!isMobile,powerPreference:'high-performance'});renderer.setPixelRatio(isMobile?1:Math.min(devicePixelRatio,1.25));renderer.setSize(Math.max(1,innerWidth),Math.max(1,innerHeight));renderer.shadowMap.enabled=!isMobile;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=.85;document.body.prepend(renderer.domElement);
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x171834);scene.fog=new THREE.Fog(0x171834,45,115);const camera=new THREE.PerspectiveCamera(55,viewW()/viewH(),.1,150);const renderer=new THREE.WebGLRenderer({antialias:!isMobile,powerPreference:'high-performance'});renderer.setPixelRatio(isMobile?1:Math.min(devicePixelRatio,1.25));renderer.setSize(viewW(),viewH());renderer.shadowMap.enabled=!isMobile;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=.85;document.body.prepend(renderer.domElement);
 renderer.domElement.addEventListener('webglcontextlost',e=>{e.preventDefault();lowQuality=true;$('#quality').textContent='✦ Лёгкая';composer.setPixelRatio(.65);refreshWorld();showNotice('Восстановление графики...')});
 renderer.domElement.addEventListener('webglcontextrestored',()=>{refreshWorld()});let hemi=new THREE.HemisphereLight(0xc9d7ff,0x27203d,.85);scene.add(hemi);let sun=new THREE.DirectionalLight(0xbcd7ff,.4);sun.position.set(10,25,12);sun.castShadow=!isMobile;sun.shadow.mapSize.set(1024,1024);sun.shadow.camera.left=-30;sun.shadow.camera.right=30;sun.shadow.camera.top=30;sun.shadow.camera.bottom=-30;sun.shadow.camera.near=1;sun.shadow.camera.far=75;sun.shadow.bias=-.0004;sun.shadow.normalBias=.025;sun.shadow.radius=3;scene.add(sun);
 const tealLight=new THREE.PointLight(0x6cc5d0,28,35,2);tealLight.position.set(-15,8,3);scene.add(tealLight);const purpleLight=new THREE.PointLight(0x9876bf,30,38,2);purpleLight.position.set(15,9,-5);scene.add(purpleLight);
@@ -1378,9 +1434,10 @@ function spawnDamageNumber(m){
 }
 function updateDamageNumbers(now){
  camera.updateMatrixWorld();
+ let vw=viewW(),vh=viewH();
  for(let i=damageNumbers.length-1;i>=0;i--){let n=damageNumbers[i],age=Math.max(0,(now-n.born)/n.duration);if(age>=1||!room||phase!=='match'){removeDamageNumber(i);continue}
   damageProjection.set(n.x,n.y+age*1.15,n.z).project(camera);
-  let x=(damageProjection.x*.5+.5)*innerWidth,y=(-damageProjection.y*.5+.5)*innerHeight;
+  let x=(damageProjection.x*.5+.5)*vw,y=(-damageProjection.y*.5+.5)*vh;
   n.element.style.visibility=damageProjection.z>=-1&&damageProjection.z<=1&&Math.abs(damageProjection.x)<1.2&&Math.abs(damageProjection.y)<1.2?'visible':'hidden';
   n.element.style.opacity=String(1-age);let birth=Math.min(1,age/.14),scale=.65+.35*(1-Math.pow(1-birth,3));
   n.element.style.transform=`translate(${x}px,${y}px) translate(-50%,-50%) scale(${scale})`;
@@ -1529,7 +1586,7 @@ function isChaserRole(){
 const tapRaycaster=new THREE.Raycaster();
 function pickTappedSurvivor(clientX,clientY){
  let self=players.get(me);if(!self||!isChaserRole())return null;
- let w=Math.max(1,innerWidth),h=Math.max(1,innerHeight);
+ let w=viewW(),h=viewH();
  tapRaycaster.setFromCamera({x:(clientX/w)*2-1,y:-(clientY/h)*2+1},camera);
  let ro=tapRaycaster.ray.origin,rd=tapRaycaster.ray.direction;
  let bestId=null,bestDist=4.5;
@@ -1598,18 +1655,19 @@ function endLook(e){
   if(room&&meP&&roomMode==='chaser'&&phase==='match'&&meP.data?.eliminated){cycleSpectator();return}
   if(isChaserRole()&&!isMyDead()){
    initAudio();
-   let hitId=pickTappedSurvivor(e.clientX,e.clientY);
+   let pt=pointerXY(e);
+   let hitId=pickTappedSurvivor(pt.x,pt.y);
    chaserAttack(performance.now(),hitId);
   }
  }
 }
-lookpad.addEventListener('pointerdown',e=>{if(!room||lookPointer!==null)return;e.preventDefault();lookPointer=e.pointerId;lookX=e.clientX;lookY=e.clientY;lookStartTime=performance.now();lookMoved=0;try{lookpad.setPointerCapture(e.pointerId)}catch{}});
+lookpad.addEventListener('pointerdown',e=>{if(!room||lookPointer!==null)return;e.preventDefault();lookPointer=e.pointerId;let pt=pointerXY(e);lookX=pt.x;lookY=pt.y;lookStartTime=performance.now();lookMoved=0;try{lookpad.setPointerCapture(e.pointerId)}catch{}});
 lookpad.addEventListener('pointermove',e=>{
  if(e.pointerId!==lookPointer)return;
  e.preventDefault();
  const evs=e.getCoalescedEvents?e.getCoalescedEvents():[e];
  let dx=0,dy=0;
- for(const ev of evs){dx+=ev.clientX-lookX;dy+=ev.clientY-lookY;lookX=ev.clientX;lookY=ev.clientY}
+ for(const ev of evs){let pt=pointerXY(ev);dx+=pt.x-lookX;dy+=pt.y-lookY;lookX=pt.x;lookY=pt.y}
  lookMoved+=Math.hypot(dx,dy);
  const rx=dx*.0052,ry=dy*.0046;
  angle+=rx;pitch=Math.max(-1.1,Math.min(1.1,pitch-ry));
@@ -1630,20 +1688,22 @@ function resetJoyUI(){
  stick.style.transform='translate(-50%,-50%)';
 }
 function updateFloatingJoy(e){
- const zr=joyZone.getBoundingClientRect(),r=pad.offsetWidth/2||55;
- let dx=(e.clientX-joyOriginX)/r,dy=(e.clientY-joyOriginY)/r,d=Math.max(1,Math.hypot(dx,dy));
+ const pt=pointerXY(e),r=pad.offsetWidth/2||55;
+ let dx=(pt.x-joyOriginX)/r,dy=(pt.y-joyOriginY)/r,d=Math.max(1,Math.hypot(dx,dy));
  joy={x:dx/d,y:dy/d};
  stick.style.transform=`translate(calc(-50% + ${joy.x*32}px),calc(-50% + ${joy.y*32}px))`;
 }
 joyZone.addEventListener('pointerdown',e=>{
  if(joyPointer!==null)return;e.preventDefault();joyPointer=e.pointerId;
- const zr=joyZone.getBoundingClientRect(),pw=pad.offsetWidth||112,ph=pad.offsetHeight||112;
- joyOriginX=Math.max(zr.left+pw/2,Math.min(zr.right-pw/2,e.clientX));
- joyOriginY=Math.max(zr.top+ph/2,Math.min(zr.bottom-ph/2,e.clientY));
+ const pt=pointerXY(e),zw=joyZone.offsetWidth||200,zh=joyZone.offsetHeight||200,vh=viewH();
+ const zLeft=0,zTop=vh-zh,zRight=zw,zBottom=vh;
+ const pw=pad.offsetWidth||112,ph=pad.offsetHeight||112;
+ joyOriginX=Math.max(zLeft+pw/2,Math.min(zRight-pw/2,pt.x));
+ joyOriginY=Math.max(zTop+ph/2,Math.min(zBottom-ph/2,pt.y));
  pad.classList.add('floating');
  pad.style.bottom='auto';
- pad.style.left=(joyOriginX-zr.left-pw/2)+'px';
- pad.style.top=(joyOriginY-zr.top-ph/2)+'px';
+ pad.style.left=(joyOriginX-zLeft-pw/2)+'px';
+ pad.style.top=(joyOriginY-zTop-ph/2)+'px';
  try{joyZone.setPointerCapture(e.pointerId)}catch{}
  updateFloatingJoy(e);
 });
@@ -1656,13 +1716,13 @@ joyZone.addEventListener('lostpointercapture',e=>{if(e.pointerId===joyPointer)re
 let firePointer=null,fireX=0,fireY=0;
 const fireBtnEl=$('#fire');
 fireBtnEl.addEventListener('pointerdown',e=>{
- e.preventDefault();firing=true;firePointer=e.pointerId;fireX=e.clientX;fireY=e.clientY;
+ e.preventDefault();firing=true;firePointer=e.pointerId;let pt=pointerXY(e);fireX=pt.x;fireY=pt.y;
  try{fireBtnEl.setPointerCapture(e.pointerId)}catch{}
  initAudio();fireOnce(performance.now());
 });
 fireBtnEl.addEventListener('pointermove',e=>{
  if(e.pointerId!==firePointer)return;e.preventDefault();
- let dx=e.clientX-fireX,dy=e.clientY-fireY;fireX=e.clientX;fireY=e.clientY;
+ let pt=pointerXY(e),dx=pt.x-fireX,dy=pt.y-fireY;fireX=pt.x;fireY=pt.y;
  const rx=dx*.0056,ry=dy*.0048;
  angle+=rx;pitch=Math.max(-1.1,Math.min(1.1,pitch-ry));lookDX=rx;lookDY=ry;
 });
@@ -1912,4 +1972,4 @@ function frame(t){
  updateDamageNumbers(t);let firedFrame=muzzlePending;muzzlePending=false;muzzleLight.intensity=firedFrame?18:0;$('#muzzleflash').style.opacity=firedFrame?'1':'0';composer.render();muzzleLight.intensity=0;
  }catch(err){console.error('Frame error:',err)}
 }
-requestAnimationFrame(frame);window.addEventListener('resize',()=>{let w=Math.max(1,innerWidth),h=Math.max(1,innerHeight);camera.aspect=w/h;camera.updateProjectionMatrix();renderer.setSize(w,h);composer.setSize(w,h)});
+requestAnimationFrame(frame);window.addEventListener('resize',syncOrientationLayout);
