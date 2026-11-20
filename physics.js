@@ -11,17 +11,20 @@ VERTICAL_BLOCKS.push({x:15.3,z:0,hx:.35,hz:2.4,h:3.2,spawnCover:true},{x:7,z:-3,
 DUCT_BLOCKS.push({x:4,z:11.6,hx:2.1,hz:.35,h:3.1,spawnCover:true},{x:2,z:-4,hx:1,hz:1,h:2.1,glass:true});
 STATION_BLOCKS.push({x:4.5,z:11.8,hx:2,hz:.35,h:3.1,spawnCover:true},{x:-3,z:5,hx:1,hz:1,h:2.1,glass:true});
 // Slab intersection: returns nearest solid geometry in the ray, with bridge undersides respected.
-export function shotWallDistance(phase,ox,oy,oz,dx,dy,dz,maxDistance){
- let nearest=maxDistance;
- for(const b of blocksFor(phase)){
+export function shotWallHit(phase,ox,oy,oz,dx,dy,dz,maxDistance,extraBlocks=null){
+ let nearest=maxDistance,hitBlock=null;
+ for(const b of blocksFor(phase,extraBlocks)){
   if(b.glass)continue;
   let lo=0,hi=nearest;const bounds=[[ox,dx,b.x-b.hx,b.x+b.hx],[oy,dy,b.bottom||0,b.h],[oz,dz,b.z-b.hz,b.z+b.hz]];
   for(const [o,d,min,max] of bounds){if(Math.abs(d)<1e-9){if(o<min||o>max){hi=-1;break}}else{let t1=(min-o)/d,t2=(max-o)/d;if(t1>t2)[t1,t2]=[t2,t1];lo=Math.max(lo,t1);hi=Math.min(hi,t2);if(lo>hi)break}}
-  if(hi>=lo&&hi>=0&&lo<nearest)nearest=Math.max(0,lo);
+  if(hi>=lo&&hi>=0&&lo<nearest){nearest=Math.max(0,lo);hitBlock=b}
  }
  // The Colosseum kit's circular props have approximate cylindrical collision volumes.
- if(phase!=='duct'&&phase!=='station'&&phase!=='neoball'&&phase!=='garden'&&phase!=='lobby')for(const [cx,cz,r] of covers){let px=ox-cx,pz=oz-cz,a=dx*dx+dz*dz,b=2*(px*dx+pz*dz),c=px*px+pz*pz-r*r,disc=b*b-4*a*c;if(a<1e-9||disc<0)continue;let lo=Math.max(0,(-b-Math.sqrt(disc))/(2*a)),hi=(-b+Math.sqrt(disc))/(2*a);if(Math.abs(dy)<1e-9){if(oy<0||oy>1.4)continue}else{let y1=(0-oy)/dy,y2=(1.4-oy)/dy;if(y1>y2)[y1,y2]=[y2,y1];lo=Math.max(lo,y1);hi=Math.min(hi,y2)}if(hi>=lo&&lo<nearest)nearest=lo}
- return nearest;
+ if(phase!=='duct'&&phase!=='station'&&phase!=='neoball'&&phase!=='garden'&&phase!=='lobby')for(const [cx,cz,r] of covers){let px=ox-cx,pz=oz-cz,a=dx*dx+dz*dz,b=2*(px*dx+pz*dz),c=px*px+pz*pz-r*r,disc=b*b-4*a*c;if(a<1e-9||disc<0)continue;let lo=Math.max(0,(-b-Math.sqrt(disc))/(2*a)),hi=(-b+Math.sqrt(disc))/(2*a);if(Math.abs(dy)<1e-9){if(oy<0||oy>1.4)continue}else{let y1=(0-oy)/dy,y2=(1.4-oy)/dy;if(y1>y2)[y1,y2]=[y2,y1];lo=Math.max(lo,y1);hi=Math.min(hi,y2)}if(hi>=lo&&lo<nearest){nearest=lo;hitBlock=null}}
+ return {dist:nearest,block:hitBlock};
+}
+export function shotWallDistance(phase,ox,oy,oz,dx,dy,dz,maxDistance,extraBlocks=null){
+ return shotWallHit(phase,ox,oy,oz,dx,dy,dz,maxDistance,extraBlocks).dist;
 }
 // Neo-ball: solid volumes are the single source of truth for rendered cover, ray hits and wall kicks.
 export const NEO_BLOCKS = [
@@ -75,28 +78,54 @@ export const GARDEN_BLOCKS = [
  {x:-14.5,z:-13.8,hx:1.8,hz:1.2,h:1.15,kind:'flowerbed'},
  {x:14.5,z:13.8,hx:1.8,hz:1.2,h:1.15,kind:'flowerbed'}
 ];
-export const HUB_ZONES=[{id:'neo2',mode:'neoball',capacity:2,x:-8,z:-11,radius:2.3},{id:'chaser',mode:'chaser',capacity:5,minPlayers:3,x:0,z:-11,radius:2.35},{id:'neo4',mode:'neoball',capacity:4,x:8,z:-11,radius:2.3},{id:'duo',capacity:2,x:-8,z:3,radius:2.3},{id:'trio',capacity:3,x:0,z:3,radius:2.3},{id:'squad',capacity:4,x:8,z:3,radius:2.3}];
+export const HUB_ZONES=[{id:'neo2',mode:'neoball',capacity:2,x:-8,z:-11,radius:2.3},{id:'chaser',mode:'chaser',capacity:5,minPlayers:3,x:0,z:-11,radius:2.35},{id:'neo4',mode:'neoball',capacity:4,x:8,z:-11,radius:2.3},{id:'duo',capacity:2,x:-8,z:3,radius:2.3},{id:'control',mode:'control',capacity:6,minPlayers:4,x:0,z:3,radius:2.35},{id:'squad',capacity:4,x:8,z:3,radius:2.3}];
+export const DESTRUCTIBLE_PRESETS={
+ colosseum:[
+  {id:'d_c1',x:-5.5,z:0,hx:1.15,hz:1.15,h:2.1,hp:180,maxHp:180},
+  {id:'d_c2',x:5.5,z:0,hx:1.15,hz:1.15,h:2.1,hp:180,maxHp:180},
+  {id:'d_c3',x:0,z:-5.8,hx:1.5,hz:.75,h:1.9,hp:180,maxHp:180},
+  {id:'d_c4',x:0,z:5.8,hx:1.5,hz:.75,h:1.9,hp:180,maxHp:180},
+  {id:'d_c5',x:-11,z:-8.5,hx:1.1,hz:1.1,h:2.0,hp:160,maxHp:160},
+  {id:'d_c6',x:11,z:8.5,hx:1.1,hz:1.1,h:2.0,hp:160,maxHp:160}
+ ],
+ station:[
+  {id:'d_s1',x:-2.6,z:-4.8,hx:1.3,hz:.7,h:1.9,hp:180,maxHp:180},
+  {id:'d_s2',x:2.6,z:4.8,hx:1.3,hz:.7,h:1.9,hp:180,maxHp:180},
+  {id:'d_s3',x:-9.5,z:4.5,hx:1.1,hz:1.1,h:2.0,hp:160,maxHp:160},
+  {id:'d_s4',x:9.5,z:-4.5,hx:1.1,hz:1.1,h:2.0,hp:160,maxHp:160}
+ ],
+ duct:[
+  {id:'d_d1',x:-4.2,z:0,hx:.95,hz:1.2,h:1.9,hp:180,maxHp:180},
+  {id:'d_d2',x:4.2,z:0,hx:.95,hz:1.2,h:1.9,hp:180,maxHp:180},
+  {id:'d_d3',x:0,z:-12.5,hx:1.4,hz:.75,h:1.9,hp:160,maxHp:160},
+  {id:'d_d4',x:0,z:12.5,hx:1.4,hz:.75,h:1.9,hp:160,maxHp:160}
+ ]
+};
+export const CONTROL_POINT={x:0,z:0,radius:5.2};
 export const VOTE_ZONES=[{id:'duct',x:-6.6,z:0,radius:2.0},{id:'colosseum',x:-2.2,z:0,radius:2.0},{id:'station',x:2.2,z:0,radius:2.0},{id:'garden',x:6.6,z:0,radius:2.0}];
 export function voteAt(x,z){return VOTE_ZONES.find(v=>Math.hypot(x-v.x,z-v.z)<=v.radius)?.id||null}
-const blocksFor=phase=>phase==='duct'?DUCT_BLOCKS:phase==='station'?STATION_BLOCKS:phase==='neoball'?NEO_BLOCKS:phase==='garden'?GARDEN_BLOCKS:VERTICAL_BLOCKS;
-export function groundHeight(x,z,y,phase){if(phase!=='lobby'&&phase!=='hub')for(const b of blocksFor(phase))if(Math.abs(x-b.x)<=b.hx&&Math.abs(z-b.z)<=b.hz&&Math.abs(y-b.h)<.07)return b.h;return y<=.001?0:null}
-export function landingHeight(x,z,from,to,phase){let top=0;if(phase!=='lobby'&&phase!=='hub')for(const b of blocksFor(phase))if(Math.abs(x-b.x)<=b.hx&&Math.abs(z-b.z)<=b.hz&&from>=b.h-.001&&to<=b.h&&b.h>top)top=b.h;return to<=top?top:null}
-export function constrainPosition(x,z,phase,y=0){
+const blocksFor=(phase,extraBlocks=null)=>{
+ const base=phase==='duct'?DUCT_BLOCKS:phase==='station'?STATION_BLOCKS:phase==='neoball'?NEO_BLOCKS:phase==='garden'?GARDEN_BLOCKS:VERTICAL_BLOCKS;
+ return extraBlocks&&extraBlocks.length?base.concat(extraBlocks):base;
+};
+export function groundHeight(x,z,y,phase,extraBlocks=null){if(phase!=='lobby'&&phase!=='hub')for(const b of blocksFor(phase,extraBlocks))if(Math.abs(x-b.x)<=b.hx&&Math.abs(z-b.z)<=b.hz&&Math.abs(y-b.h)<.07)return b.h;return y<=.001?0:null}
+export function landingHeight(x,z,from,to,phase,extraBlocks=null){let top=0;if(phase!=='lobby'&&phase!=='hub')for(const b of blocksFor(phase,extraBlocks))if(Math.abs(x-b.x)<=b.hx&&Math.abs(z-b.z)<=b.hz&&from>=b.h-.001&&to<=b.h&&b.h>top)top=b.h;return to<=top?top:null}
+export function constrainPosition(x,z,phase,y=0,extraBlocks=null){
  if(phase==='lobby'||phase==='hub'){
   let edge=phase==='hub'?15.65:8.25;x=Math.max(-edge,Math.min(edge,x));z=Math.max(-edge,Math.min(edge,z));
  }else{
   if(phase==='duct'||phase==='station'||phase==='neoball'||phase==='garden'){let xEdge=phase==='garden'?18.5:14.5;x=Math.max(-xEdge,Math.min(xEdge,x));let zEdge=phase==='neoball'?70:phase==='garden'?18.5:17.5;z=Math.max(-zEdge,Math.min(zEdge,z))}else{let d=Math.hypot(x/ARENA_RX,z/ARENA_RZ);if(d>1){x/=d;z/=d}}
-  for(const b of blocksFor(phase)){if(y>=b.h-.02||(b.bottom&&y+1.7<=b.bottom))continue;let dx=x-b.x,dz=z-b.z,ex=b.hx+.32,ez=b.hz+.32;if(Math.abs(dx)<ex&&Math.abs(dz)<ez){if(ex-Math.abs(dx)<ez-Math.abs(dz))x=b.x+(dx>=0?ex:-ex);else z=b.z+(dz>=0?ez:-ez)}}
+  for(const b of blocksFor(phase,extraBlocks)){if(y>=b.h-.02||(b.bottom&&y+1.7<=b.bottom))continue;let dx=x-b.x,dz=z-b.z,ex=b.hx+.32,ez=b.hz+.32;if(Math.abs(dx)<ex&&Math.abs(dz)<ez){if(ex-Math.abs(dx)<ez-Math.abs(dz))x=b.x+(dx>=0?ex:-ex);else z=b.z+(dz>=0?ez:-ez)}}
   if(phase!=='duct'&&phase!=='station'&&phase!=='neoball'&&phase!=='garden'&&y<1.4)for(let [cx,cz,r] of covers){let dx=x-cx,dz=z-cz,d=Math.hypot(dx,dz);if(d<r){if(d<.001){dx=r;dz=0;d=r}x=cx+dx*r/d;z=cz+dz*r/d}}
  }
  return {x,z};
 }
-export function wallContact(x,z,phase,y=0){
+export function wallContact(x,z,phase,y=0,extraBlocks=null){
  if(phase==='lobby'||phase==='hub'){
   let edge=phase==='hub'?15.65:8.25;const dx=edge-Math.abs(x),dz=edge-Math.abs(z);if(Math.min(dx,dz)>.38)return null;
   return dx<dz?{x:-Math.sign(x),z:0,id:'lobby-x-'+Math.sign(x)}:{x:0,z:-Math.sign(z),id:'lobby-z-'+Math.sign(z)};
  }
- for(const [i,b] of blocksFor(phase).entries()){if(y>=b.h-.02||(b.bottom&&y+1.7<=b.bottom))continue;let dx=x-b.x,dz=z-b.z,ex=b.hx+.32,ez=b.hz+.32;if(Math.abs(dx)<=ex+.35&&Math.abs(dz)<=ez+.35){let diffX=Math.abs(Math.abs(dx)-ex),diffZ=Math.abs(Math.abs(dz)-ez);if(diffX<.35&&diffX<=diffZ)return {x:Math.sign(dx)||1,z:0,id:phase+'-block-'+i};if(diffZ<.35)return {x:0,z:Math.sign(dz)||1,id:phase+'-block-'+i}}}
+ for(const [i,b] of blocksFor(phase,extraBlocks).entries()){if(y>=b.h-.02||(b.bottom&&y+1.7<=b.bottom))continue;let dx=x-b.x,dz=z-b.z,ex=b.hx+.32,ez=b.hz+.32;if(Math.abs(dx)<=ex+.35&&Math.abs(dz)<=ez+.35){let diffX=Math.abs(Math.abs(dx)-ex),diffZ=Math.abs(Math.abs(dz)-ez);if(diffX<.35&&diffX<=diffZ)return {x:Math.sign(dx)||1,z:0,id:phase+'-block-'+i};if(diffZ<.35)return {x:0,z:Math.sign(dz)||1,id:phase+'-block-'+i}}}
  if(phase==='duct'||phase==='station'||phase==='neoball'||phase==='garden'){let xEdge=phase==='garden'?18.5:14.5,zEdge=phase==='neoball'?70:phase==='garden'?18.5:17.5;let dx=xEdge-Math.abs(x),dz=zEdge-Math.abs(z);if(Math.min(dx,dz)>.38)return null;return dx<dz?{x:-Math.sign(x),z:0,id:phase+'-x-'+Math.sign(x)}:{x:0,z:-Math.sign(z),id:phase+'-z-'+Math.sign(z)}}
  if(y<1.4){for(let [i,[cx,cz,r]] of covers.entries()){let dx=x-cx,dz=z-cz,d=Math.hypot(dx,dz);if(d>.0001&&Math.abs(d-r)<=.35)return {x:dx/d,z:dz/d,id:'cover-'+i}}}
  const q=Math.hypot(x/ARENA_RX,z/ARENA_RZ);if(q===0)return null;
