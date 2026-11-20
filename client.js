@@ -25,7 +25,9 @@ function pointerXY(e){
 function syncRendererSize(){
  if(!rendererReady)return;
  let w=viewW(),h=viewH();
- camera.aspect=w/h;camera.updateProjectionMatrix();
+ camera.aspect=w/h;
+ camera.setViewOffset(w,h,0,Math.round(h*.04),w,h);
+ camera.updateProjectionMatrix();
  renderer.setSize(w,h);
  composer.setSize(w,h);
 }
@@ -1548,6 +1550,62 @@ function triggerChaserBanner(m){
  try{initAudio();playChaserVoice(m.isMe)}catch{}
 }
 
+let autoFireEnabled=(()=>{try{let s=localStorage.getItem('neon_autofire');return s===null?isMobile:s==='1'}catch{return isMobile}})();
+let currentAimTarget=null;
+const aimLockProj=new THREE.Vector3();
+function syncAutoFireUI(){
+ let b=$('#autofire-btn');if(!b)return;
+ b.classList.toggle('active',autoFireEnabled);
+ b.textContent=autoFireEnabled?'⚡ Авто: ВКЛ':'⚡ Авто: ВЫКЛ';
+}
+syncAutoFireUI();
+$('#autofire-btn').onclick=()=>{
+ autoFireEnabled=!autoFireEnabled;
+ try{localStorage.setItem('neon_autofire',autoFireEnabled?'1':'0')}catch{}
+ syncAutoFireUI();
+ showNotice(autoFireEnabled?'АВТО-ОГОНЬ ВКЛЮЧЁН':'АВТО-ОГОНЬ ВЫКЛЮЧЕН');
+};
+
+function findBestAimTarget(){
+ if(phase!=='match')return null;
+ let self=players.get(me);if(!self)return null;
+ if(roomMode==='chaser'&&self.data?.team==='chaser')return null;
+ let maxR=(defs[self.data?.weapon]?.range||30)+2;
+ let isTeamMode=(roomMode==='neoball'||roomMode==='chaser'||roomMode==='control')&&!!self.data?.team;
+ let isSupp=self.data?.role==='support';
+ let cp=Math.cos(pitch),fwdX=Math.sin(angle)*cp,fwdY=Math.sin(pitch),fwdZ=-Math.cos(angle)*cp;
+ let cone=isMobile?.095:.055;
+ let eyeY=jumpY+1.7,extra=liveExtraBlocks();
+ let best=null,bestScore=1e9;
+ for(let [id,o] of players){
+  if(id===me||o.data?.respawnAt||o.data?.eliminated)continue;
+  let isAlly=isTeamMode&&(o.data?.team===self.data.team);
+  if(isAlly&&!isSupp)continue;
+  let px=o.mesh.position.x,py=o.mesh.position.y,pz=o.mesh.position.z;
+  let bestPart=null;
+  for(const part of [{h:1.58,head:true},{h:1.05,head:false}]){
+   let rx=px-self.x,ry=py+part.h-eyeY,rz=pz-self.z;
+   let dist=Math.hypot(rx,ry,rz);
+   if(dist<.3||dist>maxR)continue;
+   let dot=(rx*fwdX+ry*fwdY+rz*fwdZ)/dist;
+   let angErr=Math.acos(Math.max(-1,Math.min(1,dot)));
+   if(angErr>cone)continue;
+   let wallD=shotWallDistance(worldPhase(),self.x,eyeY,self.z,rx/dist,ry/dist,rz/dist,dist,extra);
+   if(wallD<dist-.35)continue;
+   if(!bestPart||angErr<bestPart.angErr){
+    let tAngle=Math.atan2(rx,-rz);
+    let tPitch=Math.asin(Math.max(-1,Math.min(1,ry/dist)));
+    bestPart={id,isAlly,isHead:part.head,dist,angErr,targetAngle:tAngle,targetPitch:tPitch,worldX:px,worldY:py+part.h,worldZ:pz,needsHeal:isAlly&&((o.data?.hp||0)<(o.data?.maxHp||100))};
+   }
+  }
+  if(bestPart){
+   let score=bestPart.angErr+(bestPart.isAlly?.025:0);
+   if(score<bestScore){bestScore=score;best=bestPart}
+  }
+ }
+ return best;
+}
+
 function aimedAtAlly(){
  if((roomMode!=='neoball'&&roomMode!=='chaser'&&roomMode!=='control')||phase!=='match')return false;
  let self=players.get(me);if(!self||!self.data?.team)return false;
@@ -1645,7 +1703,7 @@ function triggerTeamUp(){
  let p=players.get(me);if(!p||phase!=='match'||isMyDead()||isChaserRole()||!teamUpsState.length)return;
  initAudio();send({type:'teamup',angle});haptic('medium');
 }
-window.addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='Space'){e.preventDefault();if(!e.repeat){if(isSeated)send({type:'sit',seated:false});else jump()}}if(e.code==='ShiftLeft'&&!e.repeat)dash();if(e.code==='KeyE'&&!e.repeat){initAudio();if(phase==='lobby')helmAction();else triggerSkill(1)}if(e.code==='Digit1'&&!e.repeat)triggerSkill(1);if((e.code==='Digit2'||e.code==='KeyC')&&!e.repeat)triggerSkill(2);if(e.code==='KeyQ'&&!e.repeat)triggerUlt();if(e.code==='KeyR'&&!e.repeat)triggerTeamUp();if(e.code==='KeyF'&&!e.repeat){initAudio();fireOnce(performance.now())}});window.addEventListener('keyup',e=>{keys[e.code]=false;if(e.code==='Space')releaseJump()});window.addEventListener('blur',()=>{keys={};releaseJump();jumpPointer=null;lookPointer=null;joyPointer=null;firePointer=null});
+window.addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='Space'){e.preventDefault();if(!e.repeat){if(isSeated)send({type:'sit',seated:false});else jump()}}if(e.code==='ShiftLeft'&&!e.repeat)dash();if(e.code==='KeyE'&&!e.repeat){initAudio();if(phase==='lobby')helmAction();else triggerSkill(1)}if(e.code==='Digit1'&&!e.repeat)triggerSkill(1);if((e.code==='Digit2'||e.code==='KeyC')&&!e.repeat)triggerSkill(2);if(e.code==='KeyQ'&&!e.repeat)triggerUlt();if(e.code==='KeyR'&&!e.repeat)triggerTeamUp();if(e.code==='KeyF'&&!e.repeat){initAudio();fireOnce(performance.now())}});window.addEventListener('keyup',e=>{keys[e.code]=false;if(e.code==='Space')releaseJump()});window.addEventListener('blur',()=>{keys={};releaseJump();jumpPointer=null;lookPointer=null;joyPointer=null;firePointer=null;leftFirePointer=null;firing=false});
 const lookpad=$('#lookpad');let lookPointer=null,lookX=0,lookY=0,lookStartTime=0,lookMoved=0;
 function endLook(e){
  if(e.pointerId!==lookPointer)return;
@@ -1661,6 +1719,17 @@ function endLook(e){
   }
  }
 }
+function applyLookDelta(dx,dy){
+ let mag=Math.hypot(dx,dy);
+ let accel=0.0038+Math.min(0.0052,mag*0.00026);
+ let friction=(currentAimTarget&&currentAimTarget.angErr<.082)?0.62:1;
+ let zoomScale=zoom?0.52:1;
+ let gain=accel*friction*zoomScale;
+ let rx=dx*gain,ry=dy*gain*0.86;
+ angle+=rx;
+ pitch=Math.max(-1.1,Math.min(1.1,pitch-ry));
+ lookDX=rx;lookDY=ry;
+}
 lookpad.addEventListener('pointerdown',e=>{if(!room||lookPointer!==null)return;e.preventDefault();lookPointer=e.pointerId;let pt=pointerXY(e);lookX=pt.x;lookY=pt.y;lookStartTime=performance.now();lookMoved=0;try{lookpad.setPointerCapture(e.pointerId)}catch{}});
 lookpad.addEventListener('pointermove',e=>{
  if(e.pointerId!==lookPointer)return;
@@ -1669,9 +1738,7 @@ lookpad.addEventListener('pointermove',e=>{
  let dx=0,dy=0;
  for(const ev of evs){let pt=pointerXY(ev);dx+=pt.x-lookX;dy+=pt.y-lookY;lookX=pt.x;lookY=pt.y}
  lookMoved+=Math.hypot(dx,dy);
- const rx=dx*.0052,ry=dy*.0046;
- angle+=rx;pitch=Math.max(-1.1,Math.min(1.1,pitch-ry));
- lookDX=rx;lookDY=ry;
+ applyLookDelta(dx,dy);
 });
 lookpad.addEventListener('pointerup',endLook);
 lookpad.addEventListener('pointercancel',e=>{if(e.pointerId===lookPointer)lookPointer=null});
@@ -1712,9 +1779,9 @@ joyZone.addEventListener('pointerup',e=>{if(e.pointerId===joyPointer)resetJoyUI(
 joyZone.addEventListener('pointercancel',e=>{if(e.pointerId===joyPointer)resetJoyUI()});
 joyZone.addEventListener('lostpointercapture',e=>{if(e.pointerId===joyPointer)resetJoyUI()});
 
-// Right Swipe-to-Aim Attack Button (#fire)
-let firePointer=null,fireX=0,fireY=0;
-const fireBtnEl=$('#fire');
+// Right Swipe-to-Aim Attack Button (#fire) & Left Ergonomic Fire Button (#fire-left)
+let firePointer=null,fireX=0,fireY=0,leftFirePointer=null;
+const fireBtnEl=$('#fire'),fireLeftEl=$('#fire-left');
 fireBtnEl.addEventListener('pointerdown',e=>{
  e.preventDefault();firing=true;firePointer=e.pointerId;let pt=pointerXY(e);fireX=pt.x;fireY=pt.y;
  try{fireBtnEl.setPointerCapture(e.pointerId)}catch{}
@@ -1723,13 +1790,22 @@ fireBtnEl.addEventListener('pointerdown',e=>{
 fireBtnEl.addEventListener('pointermove',e=>{
  if(e.pointerId!==firePointer)return;e.preventDefault();
  let pt=pointerXY(e),dx=pt.x-fireX,dy=pt.y-fireY;fireX=pt.x;fireY=pt.y;
- const rx=dx*.0056,ry=dy*.0048;
- angle+=rx;pitch=Math.max(-1.1,Math.min(1.1,pitch-ry));lookDX=rx;lookDY=ry;
+ applyLookDelta(dx,dy);
 });
-function endFirePointer(e){if(e.pointerId===firePointer){firePointer=null;firing=false}}
+function endFirePointer(e){if(e.pointerId===firePointer){firePointer=null;if(leftFirePointer===null)firing=false}}
 fireBtnEl.addEventListener('pointerup',endFirePointer);
 fireBtnEl.addEventListener('pointercancel',endFirePointer);
 fireBtnEl.addEventListener('lostpointercapture',endFirePointer);
+
+fireLeftEl.addEventListener('pointerdown',e=>{
+ e.preventDefault();firing=true;leftFirePointer=e.pointerId;
+ try{fireLeftEl.setPointerCapture(e.pointerId)}catch{}
+ initAudio();fireOnce(performance.now());
+});
+function endLeftFire(e){if(e.pointerId===leftFirePointer){leftFirePointer=null;if(firePointer===null)firing=false}}
+fireLeftEl.addEventListener('pointerup',endLeftFire);
+fireLeftEl.addEventListener('pointercancel',endLeftFire);
+fireLeftEl.addEventListener('lostpointercapture',endLeftFire);
 
 $('#skill1').onpointerdown=e=>{e.preventDefault();triggerSkill(1)};
 $('#skill2').onpointerdown=e=>{e.preventDefault();triggerSkill(2)};
@@ -1738,13 +1814,21 @@ $('#teamup-btn').onpointerdown=e=>{e.preventDefault();triggerTeamUp()};
 $('#zoom').onclick=()=>zoom=!zoom;$('#jump').onpointerdown=e=>{if(jumpPointer!==null)return;e.preventDefault();jumpPointer=e.pointerId;$('#jump').setPointerCapture(e.pointerId);jump()};$('#jump').onpointerup=$('#jump').onpointercancel=e=>{if(e.pointerId!==jumpPointer)return;jumpPointer=null;releaseJump()};$('#jump').onlostpointercapture=e=>{if(e.pointerId===jumpPointer){jumpPointer=null;releaseJump()}};$('#dash').onpointerdown=e=>{e.preventDefault();dash()};
 
 function isMyDead(t=performance.now()){let p=players.get(me);return !!(p&&phase==='match'&&(p.data?.respawnAt||p.data?.eliminated||myRespawnUntil>t))}
-function fireOnce(t){
+function fireOnce(t,isAuto=false){
  let p=players.get(me);if(!p||phase!=='match'||isMyDead(t))return;
- if(isChaserRole()){chaserAttack(t,null);return}
+ if(isChaserRole()){if(!isAuto)chaserAttack(t,null);return}
  let w=defs[p.data.weapon];if(!w)return;
  let ally=aimedAtAlly();
- if(ally&&p.data.role!=='support'){if(t-lastFire>350){lastFire=t;showNotice('НЕЛЬЗЯ СТРЕЛЯТЬ ПО СВОЕЙ КОМАНДЕ!')}return}
- let overclock=(p.data.weapon==='smg'&&currentSlide)||p.data.overdrive,rate=overclock?w.rate*.62:w.rate;if(t-lastFire<rate)return;send({type:'shoot',angle,pitch:Math.max(-1.1,Math.min(1.1,pitch+cameraPunch))});lastFire=t;
+ if(ally&&p.data.role!=='support'){if(!isAuto&&t-lastFire>350){lastFire=t;showNotice('НЕЛЬЗЯ СТРЕЛЯТЬ ПО СВОЕЙ КОМАНДЕ!')}return}
+ let overclock=(p.data.weapon==='smg'&&currentSlide)||p.data.overdrive,rate=overclock?w.rate*.62:w.rate;if(t-lastFire<rate)return;
+ let sendAngle=angle,sendPitch=pitch+cameraPunch;
+ if((isMobile||autoFireEnabled)&&currentAimTarget&&currentAimTarget.angErr<.088&&(!currentAimTarget.isAlly||p.data.role==='support')){
+  let dYaw=Math.atan2(Math.sin(currentAimTarget.targetAngle-angle),Math.cos(currentAimTarget.targetAngle-angle));
+  let mag=currentAimTarget.angErr<.045?0.88:0.65;
+  sendAngle=angle+dYaw*mag;
+  sendPitch=pitch+(currentAimTarget.targetPitch-pitch)*mag+cameraPunch*.35;
+ }
+ send({type:'shoot',angle:sendAngle,pitch:Math.max(-1.1,Math.min(1.1,sendPitch))});lastFire=t;
  if(!overclock){let power=p.data.weapon==='shotgun'?1.5:1;recoil=Math.min(.35,recoil+.14*power);cameraPunch=Math.min(.08,cameraPunch+.024*power);cameraBack=Math.min(.10,cameraBack+.035*power)}else{recoil=0;cameraPunch=0;cameraBack=0}
  if(p.data.weapon==='shotgun'&&groundHeight(p.x,p.z,jumpY,worldPhase(),liveExtraBlocks())===null){let dx=Math.sin(angle),dz=-Math.cos(angle);impulseX-=dx*2.5;impulseZ-=dz*2.5;if(flipTime>0&&dx*lastWallNormal.x+dz*lastWallNormal.z>.25){impulseX+=lastWallNormal.x*4.5;impulseZ+=lastWallNormal.z*4.5}}
  muzzlePending=true;shotVisuals(t);playShot(p.data.weapon);haptic('medium')
@@ -1889,7 +1973,18 @@ function frame(t){
    let next=constrainPosition(p.x+(moveVX+impulseX)*dt,p.z+(moveVZ+impulseZ)*dt,worldPhase(),jumpY,extra);p.x=next.x;p.z=next.z;
    wallCarry=Math.max(0,wallCarry-dt);let impulseDamping=wallCarry>0?1.7:3;impulseX*=Math.exp(-impulseDamping*dt);impulseZ*=Math.exp(-impulseDamping*dt);
    if(t-lastSend>50){send({type:'move',x:p.x,z:p.z,y:jumpY,flip:flipTime/.7,angle,pitch:Math.max(-1.15,Math.min(1.15,pitch)),slide:isSliding,ix:inputX,iz:inputZ,epoch:roomEpoch,spawnRev:p.data.spawnRev||0,seq:++moveSeq});lastSend=t}
-   if(firing||keys.KeyF)fireOnce(t)
+   currentAimTarget=findBestAimTarget();
+   if((isMobile||autoFireEnabled)&&firing&&currentAimTarget&&currentAimTarget.angErr<.088&&(!currentAimTarget.isAlly||p.data.role==='support')){
+    let dYaw=Math.atan2(Math.sin(currentAimTarget.targetAngle-angle),Math.cos(currentAimTarget.targetAngle-angle));
+    let pull=Math.min(1,dt*6);
+    angle+=dYaw*pull;
+    pitch=Math.max(-1.1,Math.min(1.1,pitch+(currentAimTarget.targetPitch-pitch)*pull));
+   }
+   let autoShouldFire=autoFireEnabled&&!firing&&!keys.KeyF&&currentAimTarget&&(!currentAimTarget.isAlly||currentAimTarget.needsHeal);
+   if(firing||keys.KeyF)fireOnce(t,false);
+   else if(autoShouldFire)fireOnce(t,true);
+  }else{
+   currentAimTarget=null;
   }
   if(isSeated&&t-lastSend>80){send({type:'move',x:p.x,z:p.z,y:0,flip:0,angle,pitch:Math.max(-1.15,Math.min(1.15,pitch)),slide:false,ix:0,iz:0,epoch:roomEpoch,spawnRev:p.data.spawnRev||0,seq:++moveSeq});lastSend=t}
   if(!dead&&!isSeated&&phase!=='results'&&Math.hypot(x,y)<.01&&Math.hypot(moveVX,moveVZ)<.12&&p.ackSeq>=moveSeq-1&&Number.isFinite(p.authX)){let diff=Math.hypot(p.authX-p.x,p.authZ-p.z);if(diff>.35){let k=Math.min(1,dt*2);p.x+=(p.authX-p.x)*k;p.z+=(p.authZ-p.z)*k}}
@@ -1918,9 +2013,14 @@ function frame(t){
   }
   let allyAim=!dead&&aimedAtAlly();
   let isSupp=p.data?.role==='support';
-  $('#cross').classList.toggle('ally',allyAim);
+  let crossEl=$('#cross');
+  crossEl.classList.toggle('ally',allyAim||!!(currentAimTarget&&currentAimTarget.isAlly));
+  crossEl.classList.toggle('enemy',!allyAim&&!!(currentAimTarget&&!currentAimTarget.isAlly));
+  crossEl.classList.toggle('head',!allyAim&&!!(currentAimTarget&&!currentAimTarget.isAlly&&currentAimTarget.isHead&&currentAimTarget.angErr<.04));
+  crossEl.style.setProperty('--gap',Math.min(8,recoil*22).toFixed(1)+'px');
   $('#ally-aim').textContent=isSupp?'💚 СОЮЗНИК · ЛЕЧЕНИЕ':'🛡 СОЮЗНИК · ОГОНЬ ЗАПРЕЩЁН';
   $('#ally-aim').classList.toggle('hide',!allyAim);
+  $('#fire-left').style.display=(phase==='match'&&!dead&&!chaserMe&&!spectating)?'':'none';
 
   if(spectating&&specTarget){
    let tx=specTarget.mesh.position.x,ty=specTarget.mesh.position.y+1.70,tz=specTarget.mesh.position.z,ta=specTarget.data?.angle||0,tp=specTarget.data?.pitch||0;
@@ -1942,13 +2042,27 @@ function frame(t){
     camera.rotation.z+=Math.sin(t*.075)*.012*hyperPower;
    }
    let targetFov=(zoom?37:70)+wallKick*10+hyperPower*17;camera.fov+=(targetFov-camera.fov)*Math.min(1,dt*12);camera.updateProjectionMatrix();
-   viewGun.scale.setScalar(.68);viewGun.position.set((zoom?.14:.27)+gunSwayX+bobX*.4,-.24+gunSwayY+bobY*.45+landing*.4,-.8+recoil);viewGun.rotation.set(-recoil*1.2-gunSwayY*.35,recoil*.18-gunSwayX*.5,bobX*.55+recoil*.13);
+   viewGun.scale.setScalar(.66);viewGun.position.set((zoom?.14:.27)+gunSwayX+bobX*.4,-.28+gunSwayY+bobY*.45+landing*.4,-.8+recoil);viewGun.rotation.set(-recoil*1.2-gunSwayY*.35,recoil*.18-gunSwayX*.5,bobX*.55+recoil*.13);
    let slash=Math.sin(scytheSwing*Math.PI);
    viewScythe.position.set(.44-slash*.56+gunSwayX+bobX*.4,-.36+slash*.10+gunSwayY+bobY*.45,-.72-slash*.18);
    viewScythe.rotation.set(.18-slash*1.35,.12+slash*1.25,.15+slash*.95);
   }
+  let lockEl=$('#aim-lock');
+  if(!spectating&&currentAimTarget&&phase==='match'&&!dead){
+   camera.updateMatrixWorld();
+   aimLockProj.set(currentAimTarget.worldX,currentAimTarget.worldY,currentAimTarget.worldZ).project(camera);
+   if(aimLockProj.z>-1&&aimLockProj.z<1){
+    let lx=(aimLockProj.x*0.5+0.5)*viewW();
+    let ly=(-aimLockProj.y*0.5+0.5)*viewH();
+    lockEl.style.left=lx.toFixed(1)+'px';
+    lockEl.style.top=ly.toFixed(1)+'px';
+    lockEl.classList.toggle('ally',!!currentAimTarget.isAlly);
+    lockEl.classList.add('on');
+   }else{lockEl.classList.remove('on')}
+  }else{lockEl.classList.remove('on')}
  }else{
-  $('#cross').classList.remove('ally');$('#ally-aim').classList.add('hide');
+  currentAimTarget=null;
+  $('#cross').classList.remove('ally','enemy','head');$('#ally-aim').classList.add('hide');$('#aim-lock').classList.remove('on');$('#fire-left').style.display='none';
   camera.fov=55;camera.updateProjectionMatrix();camera.position.set(Math.sin(t*.00015)*35,18,Math.cos(t*.00015)*35);camera.lookAt(0,0,0);
  }
  if(neoSnapshot&&roomMode==='neoball'&&phase==='match'){
