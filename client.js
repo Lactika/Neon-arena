@@ -30,7 +30,7 @@ function initTelegram(){
  if(user&&!$('#name').value)$('#name').value=user.username?'@'+user.username:user.first_name||'';
 }
 initTelegram();document.addEventListener('DOMContentLoaded',initTelegram);
-let refreshPreview=()=>{};
+let refreshPreview=()=>{}, previewRenderer=null, previewScene, previewCamera, previewFigure;
 const validHeroes=['shadow','viper','blitz','skye','yoru','celeste','noch','ari','ben'];
 const heroLooks={
  shadow:{character:'shadow',hair:0,clothes:0,eyes:0},
@@ -1021,7 +1021,6 @@ function refreshGun(id, skinId='default'){
 }
 for(const file of ['blaster_smg','blaster_rifle'])loadAsset(file).then(()=>{if(requestedGun===file){let meData=players.get(me)?.data;refreshGun(meData?.weapon||'smg',meData?.look?.weaponSkin||'default')}}).catch(e=>console.error('Оружие не загрузилось',e));
 
-let previewRenderer, previewScene, previewCamera, previewFigure;
 try {
  previewRenderer=new THREE.WebGLRenderer({canvas:$('#avatar-preview'),antialias:!isMobile,alpha:true,powerPreference:'low-power'});
  previewRenderer.setPixelRatio(isMobile?1:Math.min(devicePixelRatio,1.5)); previewRenderer.setSize(180,180,false);
