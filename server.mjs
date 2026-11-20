@@ -59,7 +59,7 @@ function makeBot(room,slotIndex){
  return {
   id:'bot-'+randomUUID().slice(0,8),ws:null,isBot:true,name,
   look:{...presets[heroKey],outfit,weaponSkin:'default'},
-  x:((slotIndex%4)-1.5)*1.4,z:-5.2,y:0,flip:0,angle:0,hp:100,maxHp:100,eliminated:false,kills:0,deaths:0,
+  x:((slotIndex%4)-1.5)*1.4,z:-5.2,y:0,flip:0,angle:0,pitch:0,hp:100,maxHp:100,eliminated:false,kills:0,deaths:0,
   ready:false,seated:false,weapon,coins:10000,owned:['smg','shotgun'],ownedOutfits:['default'],ownedWeaponSkins:['default'],
   lastShot:0,lastMove:Date.now(),moveCredit:10,moveSeq:0,spawnRev:0,respawnAt:0,invulnerableUntil:0,queue:null,vote:null,
   ai:{strafeDir:randomInt(0,2)?1:-1,strafeUntil:0,jumpAt:0,vy:0,wanderX:0,wanderZ:0,wanderUntil:0,stuckTicks:0}
@@ -233,13 +233,46 @@ function fireWeapon(room,p,aim,aimPitch,now,extraSpread=0){
      broadcast(room,{type:'notice',text:`${best.name} ПОЙМАН ДУХОМ!`});
      if(![...room.players.values()].some(pl=>pl.team==='survivor'&&!pl.eliminated))finish(room,'chaser');
     }
-   }else{
-    best.respawnAt=now+RESPAWN_DELAY;
-    broadcast(room,{type:'death',target:best.id,x:best.x,y:best.y||0,z:best.z,respawnAt:best.respawnAt});
-    broadcast(room,{type:'notice',text:`${p.name} ⚡ ${best.name}`});
-   }
+  }else{
+   best.respawnAt=now+RESPAWN_DELAY;
+   broadcast(room,{type:'death',target:best.id,x:best.x,y:best.y||0,z:best.z,respawnAt:best.respawnAt});
+   broadcast(room,{type:'notice',text:`${p.name} ⚡ ${best.name}`});
   }
- }if(hits.size)sync(room);
+ }
+}if(hits.size)sync(room);
+}
+function chaserSlash(room,p,aim,now,targetId=null){
+ if(room.mode!=='chaser'||room.phase!=='match'||p.team!=='chaser'||p.eliminated||p.respawnAt)return;
+ p.lastShot=now;
+ if(now<(p.invulnerableUntil||0)){p.invulnerableUntil=0;sync(room)}
+ broadcast(room,{type:'chaser_slash',id:p.id,x:p.x,y:p.y||0,z:p.z,angle:aim});
+ const phase=mapPhase(room),fwdX=Math.sin(aim),fwdZ=-Math.cos(aim);
+ const maxReach=targetId?4.4:3.6;
+ let best=null,bestScore=Infinity;
+ for(const target of room.players.values()){
+  if(target.id===p.id||target.team!=='survivor'||target.eliminated||target.respawnAt||now<(target.invulnerableUntil||0))continue;
+  if(targetId&&target.id!==targetId)continue;
+  let dx=target.x-p.x,dz=target.z-p.z,horiz=Math.hypot(dx,dz);
+  let dy=(target.y||0)+1.0-((p.y||0)+1.0),d3=Math.hypot(dx,dy,dz)||.001;
+  if(horiz>maxReach||Math.abs((target.y||0)-(p.y||0))>2.8)continue;
+  if(!targetId&&horiz>0.9){
+   let dot=(dx*fwdX+dz*fwdZ)/horiz;
+   if(dot<.42)continue;
+  }
+  let wallD=shotWallDistance(phase,p.x,(p.y||0)+1.3,p.z,dx/d3,dy/d3,dz/d3,d3);
+  if(wallD<d3-.45)continue;
+  if(horiz<bestScore){bestScore=horiz;best=target}
+ }
+ if(!best&&targetId)return chaserSlash(room,p,aim,now,null);
+ if(!best)return;
+ let dmg=Math.max(100,best.hp||100);
+ best.hp=0;best.eliminated=true;best.respawnAt=0;best.wallSliding=false;best.lastKickWall=null;
+ p.kills++;best.deaths++;
+ broadcast(room,{type:'hit',shooter:p.id,target:best.id,x:best.x,y:(best.y||0)+1.15,z:best.z,damage:dmg,hp:0,headshot:false});
+ broadcast(room,{type:'death',target:best.id,x:best.x,y:best.y||0,z:best.z,respawnAt:0,eliminated:true});
+ broadcast(room,{type:'notice',text:`${best.name} ПОЙМАН КОСОЙ!`});
+ sync(room);
+ if(![...room.players.values()].some(pl=>pl.team==='survivor'&&!pl.eliminated))finish(room,'chaser');
 }
 const wss=new WebSocketServer({server});
 wss.on('connection',ws=>{let c={id:randomUUID(),ws,code:null};clients.set(ws,c);send(ws,{type:'hello',id:c.id,weapons,outfits,weaponSkins});ws.on('message',raw=>{let m;try{m=JSON.parse(raw)}catch{return}if(!m||typeof m.type!=='string')return;
@@ -249,7 +282,7 @@ if(m.type==='join'){if(c.code)return;let code=String(m.code||'').toUpperCase().r
  if(room.players.size>=(room.mode==='hub'?HUB_LIMIT:4)||room.phase!=='lobby'||room.locked){send(ws,{type:'error',text:room.mode==='hub'?'Общее лобби заполнено':'Комната заполнена или матч уже начался'});return}
  let name=String(m.name||'Игрок').trim().slice(0,20)||'Игрок';
  let look={...(presets[m.look?.character]||presets.shadow),outfit:'default',weaponSkin:'default'};
- let offset=room.mode==='hub'?((room.players.size%5)-2)*.8:0;let p={id:c.id,ws,name,look,x:offset,z:-8,y:0,flip:0,angle:0,hp:100,maxHp:100,eliminated:false,kills:0,deaths:0,ready:false,seated:false,weapon:'smg',coins:10000,owned:['smg','shotgun'],ownedOutfits:['default'],ownedWeaponSkins:['default'],lastShot:0,lastMove:Date.now(),moveCredit:2,moveSeq:0,spawnRev:0,respawnAt:0,invulnerableUntil:0,queue:null,vote:null,botChoice:null,botPromptedZone:null};room.players.set(c.id,p);c.code=code;send(ws,{type:'joined',code,id:c.id});sync(room);return}
+ let offset=room.mode==='hub'?((room.players.size%5)-2)*.8:0;let p={id:c.id,ws,name,look,x:offset,z:-8,y:0,flip:0,angle:0,pitch:0,hp:100,maxHp:100,eliminated:false,kills:0,deaths:0,ready:false,seated:false,weapon:'smg',coins:10000,owned:['smg','shotgun'],ownedOutfits:['default'],ownedWeaponSkins:['default'],lastShot:0,lastMove:Date.now(),moveCredit:2,moveSeq:0,spawnRev:0,respawnAt:0,invulnerableUntil:0,queue:null,vote:null,botChoice:null,botPromptedZone:null};room.players.set(c.id,p);c.code=code;send(ws,{type:'joined',code,id:c.id});sync(room);return}
 let room=rooms.get(c.code),p=room?.players.get(c.id);if(!p)return;if(room.phase==='lobby'&&room.countdown&&Date.now()>=room.countdown)tryStartRoom(room);if(room.mode==='neoball'&&room.phase==='match')neoCheckClock(room);
 if(m.type==='mapvote'&&room.mode==='voting'&&room.phase==='lobby'){if(['duct','colosseum','station','garden'].includes(m.map)){p.vote=m.map;sync(room)}return}
 if(m.type==='bot_choice'&&room.phase==='lobby'){
@@ -289,9 +322,17 @@ if(m.type==='weapon'&&p.owned.includes(m.weapon)){p.weapon=m.weapon;sync(room);r
 if(m.type==='buy'&&room.phase==='lobby'){let w=weapons[m.weapon];if(w&&w.price>0&&!p.owned.includes(m.weapon)&&p.coins>=w.price){p.coins-=w.price;p.owned.push(m.weapon);p.weapon=m.weapon;sync(room)}else send(ws,{type:'error',text:'Не хватает монет или оружие уже куплено'});return}
 if(m.type==='outfit'){let id=String(m.id||'');if(p.ownedOutfits.includes(id)){p.look={...p.look,outfit:id};sync(room);return}let item=outfits[id];if(room.phase==='lobby'&&item&&p.coins>=item.price){p.coins-=item.price;p.ownedOutfits.push(id);p.look={...p.look,outfit:id};sync(room)}else send(ws,{type:'error',text:room.phase!=='lobby'?'Покупка доступна только в лобби':'Не хватает монет'});return}
 if(m.type==='weapon_skin'){let id=String(m.id||'');if(p.ownedWeaponSkins.includes(id)){p.look={...p.look,weaponSkin:id};sync(room);return}let item=weaponSkins[id];if(room.phase==='lobby'&&item&&p.coins>=item.price){p.coins-=item.price;p.ownedWeaponSkins.push(id);p.look={...p.look,weaponSkin:id};sync(room)}else send(ws,{type:'error',text:room.phase!=='lobby'?'Покупка доступна только в лобби':'Не хватает монет'});return}
-if(m.type==='move'){if(room.phase==='ending'||room.phase==='results'||p.respawnAt||p.eliminated)return;if(Number.isInteger(m.epoch)&&m.epoch!==room.epoch)return;if(Number.isInteger(m.spawnRev)&&m.spawnRev!==p.spawnRev)return;let seq=Number.isSafeInteger(m.seq)?m.seq:p.moveSeq+1;if(seq<=p.moveSeq)return;p.moveSeq=seq;if(p.seated){p.angle=Number.isFinite(+m.angle)?+m.angle:p.angle;return}let x=Number(m.x),z=Number(m.z);if(!Number.isFinite(x)||!Number.isFinite(z))return;let now=Date.now(),delta=Math.min(1,Math.max(0,(now-p.lastMove)/1000));p.lastMove=now;p.moveCredit=Math.min(10,(p.moveCredit||0)+delta*19);let dx=x-p.x,dz=z-p.z,d=Math.hypot(dx,dz),max=p.moveCredit;if(d>max&&d>0){dx*=max/d;dz*=max/d}p.moveCredit=Math.max(0,p.moveCredit-Math.hypot(dx,dz));let oldY=p.y;p.y=Number.isFinite(+m.y)?Math.max(0,Math.min(8,+m.y)):0;let n=wallContact(p.x,p.z,mapPhase(room),p.y),mx=Number(m.ix)||0,mz=Number(m.iz)||0;let inputLength=Math.hypot(mx,mz);if(inputLength>1){mx/=inputLength;mz/=inputLength}p.wallSliding=!!(m.slide&&n&&groundHeight(p.x,p.z,p.y,mapPhase(room))===null&&p.y<=oldY+.04&&mx*n.x+mz*n.z<-.15);p.slideAt=now;if(groundHeight(p.x,p.z,p.y,mapPhase(room))!==null)p.lastKickWall=null;let constrained=constrainPosition(p.x+dx,p.z+dz,mapPhase(room),p.y);p.x=constrained.x;p.z=constrained.z;p.flip=Number.isFinite(+m.flip)?Math.max(0,Math.min(1,+m.flip)):0;p.angle=Number.isFinite(+m.angle)?+m.angle:0;if(room.mode==='neoball')neoUpdatePlayer(room,p);if(room.phase==='lobby'&&room.mode==='hub'){let zone=HUB_ZONES.find(z=>Math.hypot(p.x-z.x,p.z-z.z)<=z.radius);if(p.queue&&(!zone||p.queue!==zone.id)){p.queue=null;p.botChoice=null;if(p.botPromptedZone){p.botPromptedZone=null;send(p.ws,{type:'bot_prompt_close'})}}if(!p.queue&&zone&&[...room.players.values()].filter(q=>q.queue===zone.id).length<zone.capacity)p.queue=zone.id;updateHubQueues()}else if(room.phase==='lobby'&&room.mode==='private'){let vote=voteAt(p.x,p.z);if(vote&&!room.countdown&&!room.botPrompted)room.countdown=now+LEGACY_VOTE_DURATION;if(vote!==p.vote){p.vote=vote;sync(room)}}return}
+if(m.type==='move'){if(room.phase==='ending'||room.phase==='results'||p.respawnAt||p.eliminated)return;if(Number.isInteger(m.epoch)&&m.epoch!==room.epoch)return;if(Number.isInteger(m.spawnRev)&&m.spawnRev!==p.spawnRev)return;let seq=Number.isSafeInteger(m.seq)?m.seq:p.moveSeq+1;if(seq<=p.moveSeq)return;p.moveSeq=seq;if(p.seated){p.angle=Number.isFinite(+m.angle)?+m.angle:p.angle;return}let x=Number(m.x),z=Number(m.z);if(!Number.isFinite(x)||!Number.isFinite(z))return;let now=Date.now(),delta=Math.min(1,Math.max(0,(now-p.lastMove)/1000));p.lastMove=now;p.moveCredit=Math.min(10,(p.moveCredit||0)+delta*19);let dx=x-p.x,dz=z-p.z,d=Math.hypot(dx,dz),max=p.moveCredit;if(d>max&&d>0){dx*=max/d;dz*=max/d}p.moveCredit=Math.max(0,p.moveCredit-Math.hypot(dx,dz));let oldY=p.y;p.y=Number.isFinite(+m.y)?Math.max(0,Math.min(8,+m.y)):0;let n=wallContact(p.x,p.z,mapPhase(room),p.y),mx=Number(m.ix)||0,mz=Number(m.iz)||0;let inputLength=Math.hypot(mx,mz);if(inputLength>1){mx/=inputLength;mz/=inputLength}p.wallSliding=!!(m.slide&&n&&groundHeight(p.x,p.z,p.y,mapPhase(room))===null&&p.y<=oldY+.04&&mx*n.x+mz*n.z<-.15);p.slideAt=now;if(groundHeight(p.x,p.z,p.y,mapPhase(room))!==null)p.lastKickWall=null;let constrained=constrainPosition(p.x+dx,p.z+dz,mapPhase(room),p.y);p.x=constrained.x;p.z=constrained.z;p.flip=Number.isFinite(+m.flip)?Math.max(0,Math.min(1,+m.flip)):0;p.angle=Number.isFinite(+m.angle)?+m.angle:0;p.pitch=Number.isFinite(+m.pitch)?Math.max(-1.15,Math.min(1.15,+m.pitch)):(p.pitch||0);if(room.mode==='neoball')neoUpdatePlayer(room,p);if(room.phase==='lobby'&&room.mode==='hub'){let zone=HUB_ZONES.find(z=>Math.hypot(p.x-z.x,p.z-z.z)<=z.radius);if(p.queue&&(!zone||p.queue!==zone.id)){p.queue=null;p.botChoice=null;if(p.botPromptedZone){p.botPromptedZone=null;send(p.ws,{type:'bot_prompt_close'})}}if(!p.queue&&zone&&[...room.players.values()].filter(q=>q.queue===zone.id).length<zone.capacity)p.queue=zone.id;updateHubQueues()}else if(room.phase==='lobby'&&room.mode==='private'){let vote=voteAt(p.x,p.z);if(vote&&!room.countdown&&!room.botPrompted)room.countdown=now+LEGACY_VOTE_DURATION;if(vote!==p.vote){p.vote=vote;sync(room)}}return}
+if(m.type==='chaser_attack'&&room.phase==='match'){
+ if(room.mode!=='chaser'||p.team!=='chaser'||p.respawnAt||p.eliminated)return;
+ let now=Date.now();if(now-(p.lastShot||0)<520)return;
+ let aim=Number.isFinite(+m.angle)?+m.angle:p.angle;
+ let targetId=typeof m.targetId==='string'?m.targetId:null;
+ chaserSlash(room,p,aim,now,targetId);return
+}
 if(m.type==='shoot'&&room.phase==='match'){
  if(p.respawnAt||p.eliminated)return;
+ if(room.mode==='chaser'&&p.team==='chaser')return;
  let w=weapons[p.weapon],now=Date.now();if(!w)return;let overclock=p.weapon==='smg'&&p.wallSliding&&now-p.slideAt<200,rate=overclock?w.rate*.75:w.rate;if(now-p.lastShot<rate)return;
  let aim=Number(m.angle),aimPitch=Number(m.pitch);if(!Number.isFinite(aim)||!Number.isFinite(aimPitch))return;
  fireWeapon(room,p,aim,aimPitch,now,0);return
@@ -409,17 +450,29 @@ function tickBots(room,now,dt){
   if(room.phase!=='match')return;
   let aimTarget=visibleEnemy||nearestEnemy;
   if(aimTarget){
-   bot.angle=Math.atan2(aimTarget.x-bot.x,-(aimTarget.z-bot.z));
+   let adx=aimTarget.x-bot.x,ady=(aimTarget.y||0)+1.2-(bot.y+1.7),adz=aimTarget.z-bot.z;
+   bot.angle=Math.atan2(adx,-adz);
+   bot.pitch=Math.max(-1.1,Math.min(1.1,Math.atan2(ady,Math.hypot(adx,adz)||1)));
   }else if(md>.25){
    bot.angle=Math.atan2(mdx,-mdz);
+   bot.pitch=0;
+  }else{
+   bot.pitch=0;
   }
-  let w=weapons[bot.weapon];
-  let botRate=bot.weapon==='smg'?(room.mode==='chaser'&&bot.team==='chaser'?270:230):1050;
-  if(visibleEnemy&&w&&visibleDist<w.range&&now-bot.lastShot>=botRate&&now>=(bot.invulnerableUntil||0)-1500&&now>=(visibleEnemy.invulnerableUntil||0)){
-   let dx=visibleEnemy.x-bot.x,dy=(visibleEnemy.y||0)+1.2-(bot.y+1.7),dz=visibleEnemy.z-bot.z;
-   let aim=Math.atan2(dx,-dz),horiz=Math.hypot(dx,dz)||1,aimPitch=Math.max(-1.1,Math.min(1.1,Math.atan2(dy,horiz)));
-   fireWeapon(room,bot,aim,aimPitch,now,bot.weapon==='smg'?.095:.055);
-   if(room.phase!=='match')return;
+  if(room.mode==='chaser'&&bot.team==='chaser'){
+   if(visibleEnemy&&visibleDist<=3.2&&now-(bot.lastShot||0)>=680&&now>=(bot.invulnerableUntil||0)-1500&&now>=(visibleEnemy.invulnerableUntil||0)){
+    chaserSlash(room,bot,bot.angle,now,visibleEnemy.id);
+    if(room.phase!=='match')return;
+   }
+  }else{
+   let w=weapons[bot.weapon];
+   let botRate=bot.weapon==='smg'?230:1050;
+   if(visibleEnemy&&w&&visibleDist<w.range&&now-bot.lastShot>=botRate&&now>=(bot.invulnerableUntil||0)-1500&&now>=(visibleEnemy.invulnerableUntil||0)){
+    let dx=visibleEnemy.x-bot.x,dy=(visibleEnemy.y||0)+1.2-(bot.y+1.7),dz=visibleEnemy.z-bot.z;
+    let aim=Math.atan2(dx,-dz),horiz=Math.hypot(dx,dz)||1,aimPitch=Math.max(-1.1,Math.min(1.1,Math.atan2(dy,horiz)));
+    fireWeapon(room,bot,aim,aimPitch,now,bot.weapon==='smg'?.095:.055);
+    if(room.phase!=='match')return;
+   }
   }
  }
 }
