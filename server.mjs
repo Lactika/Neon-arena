@@ -202,6 +202,45 @@ const server=http.createServer(async(req,res)=>{try{
  if(isAudio){headers['Accept-Ranges']='bytes';let range=req.headers.range;if(range){let m=/^bytes=(\d*)-(\d*)$/.exec(range);if(!m||(!m[1]&&!m[2])){res.writeHead(416,{'Content-Range':`bytes */${data.length}`});res.end();return}let start=m[1]?Number(m[1]):Math.max(0,data.length-Number(m[2])),end=m[1]?(m[2]?Math.min(Number(m[2]),data.length-1):data.length-1):data.length-1;if(start>=data.length||end<start){res.writeHead(416,{'Content-Range':`bytes */${data.length}`});res.end();return}headers['Content-Range']=`bytes ${start}-${end}/${data.length}`;headers['Content-Length']=end-start+1;res.writeHead(206,headers);res.end(req.method==='HEAD'?undefined:data.subarray(start,end+1));return}}
  headers['Content-Length']=data.length;res.writeHead(200,headers);res.end(req.method==='HEAD'?undefined:data)
  }catch{res.writeHead(500);res.end('Build missing')}});
+function fireWeapon(room,p,aim,aimPitch,now,extraSpread=0){
+ let w=weapons[p.weapon];if(!w)return;
+ p.lastShot=now;if(now<(p.invulnerableUntil||0)){p.invulnerableUntil=0;sync(room)}
+ let airborne=groundHeight(p.x,p.z,p.y,mapPhase(room))===null,overclock=p.weapon==='smg'&&p.wallSliding&&now-p.slideAt<200;
+ let spread=(p.weapon==='smg'?(overclock?.005:w.spread*(airborne?1.1:1)):w.spread*(airborne?1.8:1))+extraSpread,hits=new Map();
+ for(let pellet=0;pellet<(w.pellets||1);pellet++){
+  let a=aim+(Math.random()-.5)*spread,pitch=Math.max(-1.15,Math.min(1.15,aimPitch+(Math.random()-.5)*spread)),cp=Math.cos(pitch),dx=Math.sin(a)*cp,dy=Math.sin(pitch),dz=-Math.cos(a)*cp,best=null,bestD=shotWallDistance(mapPhase(room),p.x,(p.y||0)+1.7,p.z,dx,dy,dz,w.range),headshot=false;
+  for(let target of room.players.values()){
+   if(target.id===p.id||target.respawnAt||target.eliminated||((room.mode==='neoball'||(room.mode==='chaser'&&p.team==='survivor'))&&target.team===p.team)||now<(target.invulnerableUntil||0))continue;
+   for(const part of [{height:1.62,radius:.33,head:true},{height:.95,radius:.63,head:false}]){
+    let rx=target.x-p.x,ry=(target.y||0)+part.height-((p.y||0)+1.7),rz=target.z-p.z,along=rx*dx+ry*dy+rz*dz,side2=rx*rx+ry*ry+rz*rz-along*along,r=part.radius;
+    if(along<=0||side2>r*r)continue;let entry=along-Math.sqrt(Math.max(0,r*r-side2));if(entry>0&&entry<w.range&&entry<bestD){best=target;bestD=entry;headshot=part.head}
+   }
+  }
+  broadcast(room,{type:'shot',id:p.id,x:p.x,y:(p.y||0)+1.7,z:p.z,angle:a,pitch,range:bestD,weapon:p.weapon,weaponSkin:p.look?.weaponSkin||'default'});
+  if(best){let base=p.weapon==='shotgun'?13:w.damage;let info=hits.get(best.id)||{target:best,damage:0,headshot:false};info.damage+=headshot?Math.round(base*1.5):base;info.headshot ||=headshot;hits.set(best.id,info)}
+ }
+ for(const {target:best,damage,headshot} of hits.values()){
+  best.hp-=damage;broadcast(room,{type:'hit',shooter:p.id,target:best.id,x:best.x,y:(best.y||0)+(headshot?1.62:.95),z:best.z,damage,hp:Math.max(0,best.hp),headshot});
+  if(best.hp<=0){
+   p.kills++;best.deaths++;dropNeoBall(room,best);best.hp=0;best.wallSliding=false;best.lastKickWall=null;
+   if(room.mode==='chaser'){
+    best.eliminated=true;best.respawnAt=0;
+    broadcast(room,{type:'death',target:best.id,x:best.x,y:best.y||0,z:best.z,respawnAt:0,eliminated:true});
+    if(best.id===room.chaser?.chaserId){
+     broadcast(room,{type:'notice',text:`ДУХ ${best.name} ПОВЕРЖЕН!`});
+     finish(room,'survivors');
+    }else{
+     broadcast(room,{type:'notice',text:`${best.name} ПОЙМАН ДУХОМ!`});
+     if(![...room.players.values()].some(pl=>pl.team==='survivor'&&!pl.eliminated))finish(room,'chaser');
+    }
+   }else{
+    best.respawnAt=now+RESPAWN_DELAY;
+    broadcast(room,{type:'death',target:best.id,x:best.x,y:best.y||0,z:best.z,respawnAt:best.respawnAt});
+    broadcast(room,{type:'notice',text:`${p.name} ⚡ ${best.name}`});
+   }
+  }
+ }if(hits.size)sync(room);
+}
 const wss=new WebSocketServer({server});
 wss.on('connection',ws=>{let c={id:randomUUID(),ws,code:null};clients.set(ws,c);send(ws,{type:'hello',id:c.id,weapons,outfits,weaponSkins});ws.on('message',raw=>{let m;try{m=JSON.parse(raw)}catch{return}if(!m||typeof m.type!=='string')return;
 if(m.type==='join'){if(c.code)return;let code=String(m.code||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,5);let room;
@@ -251,45 +290,6 @@ if(m.type==='buy'&&room.phase==='lobby'){let w=weapons[m.weapon];if(w&&w.price>0
 if(m.type==='outfit'){let id=String(m.id||'');if(p.ownedOutfits.includes(id)){p.look={...p.look,outfit:id};sync(room);return}let item=outfits[id];if(room.phase==='lobby'&&item&&p.coins>=item.price){p.coins-=item.price;p.ownedOutfits.push(id);p.look={...p.look,outfit:id};sync(room)}else send(ws,{type:'error',text:room.phase!=='lobby'?'Покупка доступна только в лобби':'Не хватает монет'});return}
 if(m.type==='weapon_skin'){let id=String(m.id||'');if(p.ownedWeaponSkins.includes(id)){p.look={...p.look,weaponSkin:id};sync(room);return}let item=weaponSkins[id];if(room.phase==='lobby'&&item&&p.coins>=item.price){p.coins-=item.price;p.ownedWeaponSkins.push(id);p.look={...p.look,weaponSkin:id};sync(room)}else send(ws,{type:'error',text:room.phase!=='lobby'?'Покупка доступна только в лобби':'Не хватает монет'});return}
 if(m.type==='move'){if(room.phase==='ending'||room.phase==='results'||p.respawnAt||p.eliminated)return;if(Number.isInteger(m.epoch)&&m.epoch!==room.epoch)return;if(Number.isInteger(m.spawnRev)&&m.spawnRev!==p.spawnRev)return;let seq=Number.isSafeInteger(m.seq)?m.seq:p.moveSeq+1;if(seq<=p.moveSeq)return;p.moveSeq=seq;if(p.seated){p.angle=Number.isFinite(+m.angle)?+m.angle:p.angle;return}let x=Number(m.x),z=Number(m.z);if(!Number.isFinite(x)||!Number.isFinite(z))return;let now=Date.now(),delta=Math.min(1,Math.max(0,(now-p.lastMove)/1000));p.lastMove=now;p.moveCredit=Math.min(10,(p.moveCredit||0)+delta*19);let dx=x-p.x,dz=z-p.z,d=Math.hypot(dx,dz),max=p.moveCredit;if(d>max&&d>0){dx*=max/d;dz*=max/d}p.moveCredit=Math.max(0,p.moveCredit-Math.hypot(dx,dz));let oldY=p.y;p.y=Number.isFinite(+m.y)?Math.max(0,Math.min(8,+m.y)):0;let n=wallContact(p.x,p.z,mapPhase(room),p.y),mx=Number(m.ix)||0,mz=Number(m.iz)||0;let inputLength=Math.hypot(mx,mz);if(inputLength>1){mx/=inputLength;mz/=inputLength}p.wallSliding=!!(m.slide&&n&&groundHeight(p.x,p.z,p.y,mapPhase(room))===null&&p.y<=oldY+.04&&mx*n.x+mz*n.z<-.15);p.slideAt=now;if(groundHeight(p.x,p.z,p.y,mapPhase(room))!==null)p.lastKickWall=null;let constrained=constrainPosition(p.x+dx,p.z+dz,mapPhase(room),p.y);p.x=constrained.x;p.z=constrained.z;p.flip=Number.isFinite(+m.flip)?Math.max(0,Math.min(1,+m.flip)):0;p.angle=Number.isFinite(+m.angle)?+m.angle:0;if(room.mode==='neoball')neoUpdatePlayer(room,p);if(room.phase==='lobby'&&room.mode==='hub'){let zone=HUB_ZONES.find(z=>Math.hypot(p.x-z.x,p.z-z.z)<=z.radius);if(p.queue&&(!zone||p.queue!==zone.id)){p.queue=null;p.botChoice=null;if(p.botPromptedZone){p.botPromptedZone=null;send(p.ws,{type:'bot_prompt_close'})}}if(!p.queue&&zone&&[...room.players.values()].filter(q=>q.queue===zone.id).length<zone.capacity)p.queue=zone.id;updateHubQueues()}else if(room.phase==='lobby'&&room.mode==='private'){let vote=voteAt(p.x,p.z);if(vote&&!room.countdown&&!room.botPrompted)room.countdown=now+LEGACY_VOTE_DURATION;if(vote!==p.vote){p.vote=vote;sync(room)}}return}
-function fireWeapon(room,p,aim,aimPitch,now,extraSpread=0){
- let w=weapons[p.weapon];if(!w)return;
- p.lastShot=now;if(now<(p.invulnerableUntil||0)){p.invulnerableUntil=0;sync(room)}
- let airborne=groundHeight(p.x,p.z,p.y,mapPhase(room))===null,overclock=p.weapon==='smg'&&p.wallSliding&&now-p.slideAt<200;
- let spread=(p.weapon==='smg'?(overclock?.005:w.spread*(airborne?1.1:1)):w.spread*(airborne?1.8:1))+extraSpread,hits=new Map();
- for(let pellet=0;pellet<(w.pellets||1);pellet++){
-  let a=aim+(Math.random()-.5)*spread,pitch=Math.max(-1.15,Math.min(1.15,aimPitch+(Math.random()-.5)*spread)),cp=Math.cos(pitch),dx=Math.sin(a)*cp,dy=Math.sin(pitch),dz=-Math.cos(a)*cp,best=null,bestD=shotWallDistance(mapPhase(room),p.x,(p.y||0)+1.7,p.z,dx,dy,dz,w.range),headshot=false;
-  for(let target of room.players.values()){
-   if(target.id===p.id||target.respawnAt||target.eliminated||((room.mode==='neoball'||(room.mode==='chaser'&&p.team==='survivor'))&&target.team===p.team)||now<(target.invulnerableUntil||0))continue;
-   for(const part of [{height:1.62,radius:.33,head:true},{height:.95,radius:.63,head:false}]){
-    let rx=target.x-p.x,ry=(target.y||0)+part.height-((p.y||0)+1.7),rz=target.z-p.z,along=rx*dx+ry*dy+rz*dz,side2=rx*rx+ry*ry+rz*rz-along*along,r=part.radius;
-    if(along<=0||side2>r*r)continue;let entry=along-Math.sqrt(Math.max(0,r*r-side2));if(entry>0&&entry<w.range&&entry<bestD){best=target;bestD=entry;headshot=part.head}
-   }
-  }
-  broadcast(room,{type:'shot',id:p.id,x:p.x,y:(p.y||0)+1.7,z:p.z,angle:a,pitch,range:bestD,weapon:p.weapon,weaponSkin:p.look?.weaponSkin||'default'});
-  if(best){let base=p.weapon==='shotgun'?13:w.damage;let info=hits.get(best.id)||{target:best,damage:0,headshot:false};info.damage+=headshot?Math.round(base*1.5):base;info.headshot ||=headshot;hits.set(best.id,info)}
- }
- for(const {target:best,damage,headshot} of hits.values()){
-  best.hp-=damage;broadcast(room,{type:'hit',shooter:p.id,target:best.id,x:best.x,y:(best.y||0)+(headshot?1.62:.95),z:best.z,damage,hp:Math.max(0,best.hp),headshot});
-  if(best.hp<=0){
-   p.kills++;best.deaths++;dropNeoBall(room,best);best.hp=0;best.wallSliding=false;best.lastKickWall=null;
-   if(room.mode==='chaser'){
-    best.eliminated=true;best.respawnAt=0;
-    broadcast(room,{type:'death',target:best.id,x:best.x,y:best.y||0,z:best.z,respawnAt:0,eliminated:true});
-    if(best.id===room.chaser?.chaserId){
-     broadcast(room,{type:'notice',text:`ДУХ ${best.name} ПОВЕРЖЕН!`});
-     finish(room,'survivors');
-    }else{
-     broadcast(room,{type:'notice',text:`${best.name} ПОЙМАН ДУХОМ!`});
-     if(![...room.players.values()].some(pl=>pl.team==='survivor'&&!pl.eliminated))finish(room,'chaser');
-    }
-   }else{
-    best.respawnAt=now+RESPAWN_DELAY;
-    broadcast(room,{type:'death',target:best.id,x:best.x,y:best.y||0,z:best.z,respawnAt:best.respawnAt});
-    broadcast(room,{type:'notice',text:`${p.name} ⚡ ${best.name}`});
-   }
-  }
- }if(hits.size)sync(room);
-}
 if(m.type==='shoot'&&room.phase==='match'){
  if(p.respawnAt||p.eliminated)return;
  let w=weapons[p.weapon],now=Date.now();if(!w)return;let overclock=p.weapon==='smg'&&p.wallSliding&&now-p.slideAt<200,rate=overclock?w.rate*.75:w.rate;if(now-p.lastShot<rate)return;

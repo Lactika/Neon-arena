@@ -9,6 +9,10 @@ import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { constrainPosition, wallContact, wallSlideVelocity, JumpWindow, WallKickLock, ARENA_RX, ARENA_RZ, VERTICAL_BLOCKS, DUCT_BLOCKS, STATION_BLOCKS, NEO_BLOCKS, GARDEN_BLOCKS, VOTE_ZONES, HUB_ZONES, groundHeight, landingHeight, shotWallDistance } from './physics.js';
 const $=s=>document.querySelector(s), menu=$('#menu'), hud=$('#hud');
+const isMobile=/Android|iPhone|iPad|iPod|Mobile|Telegram/i.test(navigator.userAgent)||(navigator.maxTouchPoints>1&&Math.min(innerWidth,innerHeight)<900);
+if(typeof CanvasRenderingContext2D!=='undefined'&&!CanvasRenderingContext2D.prototype.roundRect){
+ CanvasRenderingContext2D.prototype.roundRect=function(x,y,w,h,r=0){r=Math.min(r,w/2,h/2);this.moveTo(x+r,y);this.arcTo(x+w,y,x+w,y+h,r);this.arcTo(x+w,y+h,x,y+h,r);this.arcTo(x,y+h,x,y,r);this.arcTo(x,y,x+w,y,r);this.closePath();return this};
+}
 function updateTelegramInsets(){
  const tg=window.Telegram?.WebApp;
  const isTg=!!(tg&&(tg.initData||(tg.platform&&tg.platform!=='unknown')));
@@ -91,7 +95,7 @@ const jumpWindow=new JumpWindow(130),wallLock=new WallKickLock();let jumpPointer
 function resetJump(){wallLock.land();wallCarry=0;currentSlide=false;jumpY=0;jumpV=0;jumpWindow.reset();jumpPointer=null}
 function setGameGestures(enabled){document.documentElement.classList.toggle('in-game',enabled);try{let tg=window.Telegram?.WebApp;if(enabled)tg?.disableVerticalSwipes?.();else tg?.enableVerticalSwipes?.()}catch{}}
 function clearPlayerSprites(o){scene.remove(o.mesh);if(o.healthSprite){scene.remove(o.healthSprite);o.healthSprite.material.map.dispose();o.healthSprite.material.dispose()}if(o.nameSprite){scene.remove(o.nameSprite);o.nameSprite.material.map.dispose();o.nameSprite.material.dispose()}}
-function connect(){ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);ws.onopen=()=>{connected=true;$('#menumsg').textContent='Сервер подключён. Приветственный бонус: 10 000 монет!' };ws.onerror=()=>{if(!connected)$('#menumsg').textContent='Ошибка связи с игровым сервером.'};ws.onclose=()=>{connected=false;$('#menumsg').textContent='Нет связи с игровым сервером. Проверьте, что запущен Node.js сервер с WebSocket.';if(room){room=null;myRespawnUntil=0;wasServerDead=false;spectateId=null;chaserSnapshot=null;chaserBannerUntil=0;mapVoteDismissedEpoch=-1;resultsDismissedEpoch=-1;resetInputs();closeBotPrompt();$('#chaser-banner').classList.add('hide');$('#spectator-hud').classList.add('hide');$('#respawn-overlay').classList.add('hide');$('#end-transition').classList.add('hide');roomMode='private';$('#map-vote-modal').classList.add('hide');setGameGestures(false);refreshWorld();menu.classList.remove('hide');hud.classList.add('hide');$('#shop').classList.add('hide');$('#results').classList.add('hide');$('#menumsg').textContent='Связь с сервером потеряна. Обновите страницу.';stopMusic();syncMusic()}};ws.onmessage=e=>{try{let m=JSON.parse(e.data);if(m.type==='hello'){me=m.id;defs=m.weapons||{};outfitDefs=m.outfits||{};weaponSkinDefs=m.weaponSkins||{}}else if(m.type==='joined'){if(m.transfer){$('#shop').classList.add('hide');for(const o of players.values())clearPlayerSprites(o);players.clear();moveVX=moveVZ=impulseX=impulseZ=0;flipTime=0}myRespawnUntil=0;wasServerDead=false;spectateId=null;chaserSnapshot=null;chaserBannerUntil=0;mapVoteDismissedEpoch=-1;resultsDismissedEpoch=-1;resetInputs();closeBotPrompt();$('#chaser-banner').classList.add('hide');$('#spectator-hud').classList.add('hide');$('#respawn-overlay').classList.add('hide');resetJump();room=m.code;syncMusic();setGameGestures(true);angle=Math.PI;pitch=0;refreshWorld();menu.classList.add('hide');hud.classList.remove('hide')}else if(m.type==='left'){myRespawnUntil=0;wasServerDead=false;spectateId=null;chaserSnapshot=null;chaserBannerUntil=0;mapVoteDismissedEpoch=-1;resultsDismissedEpoch=-1;resetInputs();closeBotPrompt();$('#chaser-banner').classList.add('hide');$('#spectator-hud').classList.add('hide');$('#respawn-overlay').classList.add('hide');resetJump();$('#end-transition').classList.add('hide');room=null;roomMode='private';$('#map-vote-modal').classList.add('hide');setGameGestures(false);refreshWorld();menu.classList.remove('hide');hud.classList.add('hide');$('#shop').classList.add('hide');$('#results').classList.add('hide');stopMusic();syncMusic();for(let p of players.values())clearPlayerSprites(p);players.clear()}else if(m.type==='error'){$('#menumsg').textContent=m.text;showNotice(m.text)}else if(m.type==='notice')showNotice(m.text);else if(m.type==='bot_prompt')openBotPrompt(m);else if(m.type==='bot_prompt_close')closeBotPrompt();else if(m.type==='chaser_assigned'){triggerChaserBanner(m)}else if(m.type==='respawn'){myRespawnUntil=0;wasServerDead=false;$('#respawn-overlay').classList.add('hide');let p=players.get(me);if(p){p.x=m.x;p.z=m.z;p.data.spawnRev=m.spawnRev;p.data.respawnAt=0;moveVX=0;moveVZ=0;resetJump();impulseX=0;impulseZ=0;p.mesh.position.set(m.x,0,m.z)}}else if(m.type==='wallbounce'){if(m.id!==me)wallSparks(m.x,m.y,m.z,m.nx,m.nz)}else if(m.type==='hyperdrive'){triggerHyperdrive(m.sector,m.duration,m.by)}else if(m.type==='shot')trace(m);else if(m.type==='hit')showHit(m);else if(m.type==='death')showDeath(m);else if(m.type==='state')applyState(m)}catch(err){console.error('WS message error:',err)}}}connect();
+function connect(){ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);ws.onopen=()=>{connected=true;$('#menumsg').textContent='Сервер подключён. Приветственный бонус: 10 000 монет!' };ws.onerror=()=>{if(!connected)$('#menumsg').textContent='Ошибка связи с игровым сервером.'};ws.onclose=()=>{connected=false;$('#menumsg').textContent='Нет связи с игровым сервером. Проверьте, что запущен Node.js сервер с WebSocket.';if(room){room=null;myRespawnUntil=0;wasServerDead=false;spectateId=null;chaserSnapshot=null;chaserBannerUntil=0;mapVoteDismissedEpoch=-1;resultsDismissedEpoch=-1;resetInputs();closeBotPrompt();$('#chaser-banner').classList.add('hide');$('#spectator-hud').classList.add('hide');$('#respawn-overlay').classList.add('hide');$('#end-transition').classList.add('hide');roomMode='private';$('#map-vote-modal').classList.add('hide');setGameGestures(false);if(previewRenderer){previewRenderer.setSize(180,180,false);refreshPreview()}refreshWorld();menu.classList.remove('hide');hud.classList.add('hide');$('#shop').classList.add('hide');$('#results').classList.add('hide');$('#menumsg').textContent='Связь с сервером потеряна. Обновите страницу.';stopMusic();syncMusic()}};ws.onmessage=e=>{try{let m=JSON.parse(e.data);if(m.type==='hello'){me=m.id;defs=m.weapons||{};outfitDefs=m.outfits||{};weaponSkinDefs=m.weaponSkins||{}}else if(m.type==='joined'){if(m.transfer){$('#shop').classList.add('hide');for(const o of players.values())clearPlayerSprites(o);players.clear();moveVX=moveVZ=impulseX=impulseZ=0;flipTime=0}myRespawnUntil=0;wasServerDead=false;spectateId=null;chaserSnapshot=null;chaserBannerUntil=0;mapVoteDismissedEpoch=-1;resultsDismissedEpoch=-1;resetInputs();closeBotPrompt();$('#chaser-banner').classList.add('hide');$('#spectator-hud').classList.add('hide');$('#respawn-overlay').classList.add('hide');resetJump();room=m.code;if(previewRenderer)previewRenderer.setSize(1,1,false);syncMusic();setGameGestures(true);angle=Math.PI;pitch=0;refreshWorld();menu.classList.add('hide');hud.classList.remove('hide')}else if(m.type==='left'){myRespawnUntil=0;wasServerDead=false;spectateId=null;chaserSnapshot=null;chaserBannerUntil=0;mapVoteDismissedEpoch=-1;resultsDismissedEpoch=-1;resetInputs();closeBotPrompt();$('#chaser-banner').classList.add('hide');$('#spectator-hud').classList.add('hide');$('#respawn-overlay').classList.add('hide');resetJump();$('#end-transition').classList.add('hide');room=null;roomMode='private';$('#map-vote-modal').classList.add('hide');setGameGestures(false);if(previewRenderer){previewRenderer.setSize(180,180,false);refreshPreview()}refreshWorld();menu.classList.remove('hide');hud.classList.add('hide');$('#shop').classList.add('hide');$('#results').classList.add('hide');stopMusic();syncMusic();for(let p of players.values())clearPlayerSprites(p);players.clear()}else if(m.type==='error'){$('#menumsg').textContent=m.text;showNotice(m.text)}else if(m.type==='notice')showNotice(m.text);else if(m.type==='bot_prompt')openBotPrompt(m);else if(m.type==='bot_prompt_close')closeBotPrompt();else if(m.type==='chaser_assigned'){triggerChaserBanner(m)}else if(m.type==='respawn'){myRespawnUntil=0;wasServerDead=false;$('#respawn-overlay').classList.add('hide');let p=players.get(me);if(p){p.x=m.x;p.z=m.z;p.data.spawnRev=m.spawnRev;p.data.respawnAt=0;moveVX=0;moveVZ=0;resetJump();impulseX=0;impulseZ=0;p.mesh.position.set(m.x,0,m.z)}}else if(m.type==='wallbounce'){if(m.id!==me)wallSparks(m.x,m.y,m.z,m.nx,m.nz)}else if(m.type==='hyperdrive'){triggerHyperdrive(m.sector,m.duration,m.by)}else if(m.type==='shot')trace(m);else if(m.type==='hit')showHit(m);else if(m.type==='death')showDeath(m);else if(m.type==='state')applyState(m)}catch(err){console.error('WS message error:',err)}}}connect();
 async function fullscreen(){try{const tg=window.Telegram?.WebApp;if(tg?.requestFullscreen){tg.requestFullscreen();return}if(document.fullscreenElement){await document.exitFullscreen();return}if(document.documentElement.requestFullscreen){await document.documentElement.requestFullscreen();return}tg?.expand?.();showNotice('Разверните окно Telegram на весь экран')}catch{showNotice('Полный экран недоступен в этом браузере')}}$('#fullscreen').onclick=fullscreen;$('#fullscreen-menu').onclick=fullscreen;
 function send(m){if(connected)ws.send(JSON.stringify(m))}function join(code,priv=false){if(!connected){if(!ws||ws.readyState===WebSocket.CLOSED)connect();$('#menumsg').textContent='Нет связи с игровым сервером. Повторное подключение…';return}send({type:'join',code,name:$('#name').value,look,private:priv});initAudio()}$('#create').onclick=()=>join('');$('#create-private').onclick=()=>join('',true);$('#join').onclick=()=>{const code=$('#code').value.trim();if(!code){$('#menumsg').textContent='Введите код комнаты';return}join(code)};$('#leave').onclick=()=>send({type:'leave'});
 function closeShop(){$('#shop').classList.add('hide');syncMusic()}
@@ -103,9 +107,9 @@ $('#closeResults').onclick=closeResults;bindModalBackdrop($('#results'),closeRes
 document.addEventListener('click',e=>{let d=document.querySelector('.menu-details');if(d?.open&&!d.contains(e.target))d.open=false});
 window.addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(!$('#bot-consent-modal').classList.contains('hide'))dismissBotPrompt();else if(!$('#shop').classList.contains('hide'))closeShop();else if(!$('#map-vote-modal').classList.contains('hide'))closeMapVote();else if(!$('#results').classList.contains('hide'))closeResults()});
 for(const tabBtn of document.querySelectorAll('.shop-tab'))tabBtn.addEventListener('click',()=>{shopTab=tabBtn.dataset.tab;for(const b of document.querySelectorAll('.shop-tab'))b.classList.toggle('active',b===tabBtn);$('#items').dataset.signature='';renderShop()});
-const scene=new THREE.Scene();scene.background=new THREE.Color(0x171834);scene.fog=new THREE.Fog(0x171834,45,115);const camera=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,.1,150);const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,1.25));renderer.setSize(innerWidth,innerHeight);renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=.85;document.body.prepend(renderer.domElement);
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x171834);scene.fog=new THREE.Fog(0x171834,45,115);const camera=new THREE.PerspectiveCamera(55,Math.max(1,innerWidth)/Math.max(1,innerHeight),.1,150);const renderer=new THREE.WebGLRenderer({antialias:!isMobile,powerPreference:'high-performance'});renderer.setPixelRatio(isMobile?1:Math.min(devicePixelRatio,1.25));renderer.setSize(Math.max(1,innerWidth),Math.max(1,innerHeight));renderer.shadowMap.enabled=!isMobile;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=.85;document.body.prepend(renderer.domElement);
 renderer.domElement.addEventListener('webglcontextlost',e=>{e.preventDefault();lowQuality=true;$('#quality').textContent='✦ Лёгкая';composer.setPixelRatio(.65);refreshWorld();showNotice('Восстановление графики...')});
-renderer.domElement.addEventListener('webglcontextrestored',()=>{refreshWorld()});let hemi=new THREE.HemisphereLight(0xc9d7ff,0x27203d,.85);scene.add(hemi);let sun=new THREE.DirectionalLight(0xbcd7ff,.4);sun.position.set(10,25,12);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);sun.shadow.camera.left=-30;sun.shadow.camera.right=30;sun.shadow.camera.top=30;sun.shadow.camera.bottom=-30;sun.shadow.camera.near=1;sun.shadow.camera.far=75;sun.shadow.bias=-.0004;sun.shadow.normalBias=.025;sun.shadow.radius=3;scene.add(sun);
+renderer.domElement.addEventListener('webglcontextrestored',()=>{refreshWorld()});let hemi=new THREE.HemisphereLight(0xc9d7ff,0x27203d,.85);scene.add(hemi);let sun=new THREE.DirectionalLight(0xbcd7ff,.4);sun.position.set(10,25,12);sun.castShadow=!isMobile;sun.shadow.mapSize.set(1024,1024);sun.shadow.camera.left=-30;sun.shadow.camera.right=30;sun.shadow.camera.top=30;sun.shadow.camera.bottom=-30;sun.shadow.camera.near=1;sun.shadow.camera.far=75;sun.shadow.bias=-.0004;sun.shadow.normalBias=.025;sun.shadow.radius=3;scene.add(sun);
 const tealLight=new THREE.PointLight(0x6cc5d0,28,35,2);tealLight.position.set(-15,8,3);scene.add(tealLight);const purpleLight=new THREE.PointLight(0x9876bf,30,38,2);purpleLight.position.set(15,9,-5);scene.add(purpleLight);
 const mat=(c,em=0)=>new THREE.MeshStandardMaterial({color:c,emissive:em,roughness:.68});function box(w,h,d,m,x,y,z){let o=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m);o.position.set(x,y,z);scene.add(o);return o}let stone=mat(0x82758e),floor=mat(0x534963);box(44,1,44,floor,0,-.5,0);for(let i=-20;i<=20;i+=4){box(.035,.02,42,mat(0x9b84ac),i,.01,0);box(42,.02,.035,mat(0x9b84ac),0,.012,i)}
 for(let i=0;i<20;i++){let a=i*Math.PI*2/20,x=Math.sin(a)*25,z=Math.cos(a)*25;let pillar=new THREE.Mesh(new THREE.CylinderGeometry(.65,.8,9,8),stone);pillar.position.set(x,4.5,z);scene.add(pillar);let top=box(7,1,1.5,stone,x,9,z);top.rotation.y=a;let glow=box(.2,2,.2,mat(0x49dbf6,0x18728a),x*.91,3,z*.91);glow.rotation.y=a}for(let i=0;i<12;i++){let a=i*Math.PI*2/12;let ob=box(1.5,2,1.5,mat(0x625675),Math.sin(a)*21,1,Math.cos(a)*21);ob.rotation.y=a}
@@ -123,19 +127,21 @@ for(let i=0;i<900;i++){let a=rnd()*Math.PI*2,tier=Math.floor(rnd()*4),radius=25.
 for(let i=0;i<12;i++){let a=i*Math.PI*2/12;let panel=box(1.3,3.0,.16,i%2?neonPink:neonCyan,Math.sin(a)*24,5.5,Math.cos(a)*24);panel.rotation.y=a;}
 const fallbackWorld=new THREE.Group();for(const obj of [...scene.children])if(obj.isMesh||obj.isInstancedMesh)fallbackWorld.add(obj);scene.add(fallbackWorld);
 let ring=new THREE.Mesh(new THREE.RingGeometry(2.6,3,64),new THREE.MeshBasicMaterial({color:0x57f5ed,side:THREE.DoubleSide}));ring.rotation.x=-Math.PI/2;ring.position.y=.06;ring.position.z=-4;scene.add(ring);let beacon=new THREE.Mesh(new THREE.CylinderGeometry(3,3,.04,48),new THREE.MeshBasicMaterial({color:0x43ffe5,transparent:true,opacity:.14}));beacon.position.y=.055;beacon.position.z=-4;scene.add(beacon);
-const loader=new GLTFLoader();const kitModels={};let arenaWorld=null,lobbyWorld=null,crowdWorld=null,lowQuality=false;
+const loader=new GLTFLoader();const kitModels={};let arenaWorld=null,lobbyWorld=null,crowdWorld=null,lowQuality=isMobile;
 const reflectionGenerator=new THREE.PMREMGenerator(renderer);const reflectionScene=new THREE.Scene();reflectionScene.background=new THREE.Color(0x111229);function reflectionPanel(color,x,y,z,w,h,ry=0){let panel=new THREE.Mesh(new THREE.PlaneGeometry(w,h),new THREE.MeshBasicMaterial({color,side:THREE.DoubleSide}));panel.position.set(x,y,z);panel.rotation.y=ry;reflectionScene.add(panel)}reflectionPanel(0x39cde0,-8,5,0,10,1,Math.PI/2);reflectionPanel(0xaa36ed,8,5,0,10,1,Math.PI/2);reflectionPanel(0x5a6992,0,9,0,12,3);reflectionPanel(0x3e4263,0,3,-9,12,2);const reflectionEnv=reflectionGenerator.fromScene(reflectionScene,.12).texture;reflectionGenerator.dispose();
 const roughCanvas=document.createElement('canvas');roughCanvas.width=roughCanvas.height=128;const roughCtx=roughCanvas.getContext('2d'),roughData=roughCtx.createImageData(128,128);let roughSeed=9427;for(let y=0;y<128;y++)for(let x=0;x<128;x++){roughSeed=(roughSeed*16807)%2147483647;let grain=roughSeed/2147483647,brush=Math.sin(y*.65)*.055+Math.sin(x*.11+y*.19)*.025,v=Math.floor(170+grain*48+brush*255),i=(y*128+x)*4;roughData.data[i]=roughData.data[i+1]=roughData.data[i+2]=Math.max(0,Math.min(255,v));roughData.data[i+3]=255}roughCtx.putImageData(roughData,0,0);const roughMap=new THREE.CanvasTexture(roughCanvas);roughMap.wrapS=roughMap.wrapT=THREE.RepeatWrapping;roughMap.repeat.set(2,2);roughMap.colorSpace=THREE.NoColorSpace;
 function ensureUV(mesh){let g=mesh.geometry;if(!g||g.attributes.uv||!g.attributes.position)return;g=g.clone();let p=g.attributes.position,n=g.attributes.normal,uv=new Float32Array(p.count*2);for(let i=0;i<p.count;i++){let x=p.getX(i),y=p.getY(i),z=p.getZ(i),nx=n?Math.abs(n.getX(i)):0,ny=n?Math.abs(n.getY(i)):1,nz=n?Math.abs(n.getZ(i)):0;uv[2*i]=(nx>ny&&nx>nz?z:x)*.22;uv[2*i+1]=(ny>nx&&ny>nz?z:y)*.22}g.setAttribute('uv',new THREE.BufferAttribute(uv,2));mesh.geometry=g}
-const composer=new EffectComposer(renderer);composer.setPixelRatio(Math.min(devicePixelRatio,1));const basePass=new RenderPass(scene,camera);composer.addPass(basePass);
-const ssr=new SSRPass({renderer,scene,camera,width:innerWidth,height:innerHeight,selects:[]});ssr.resolutionScale=.4;ssr.opacity=.22;ssr.maxDistance=12;ssr.thickness=.025;ssr.enabled=false;composer.addPass(ssr);
-const ssao=new SSAOPass(scene,camera,innerWidth,innerHeight,16);ssao.kernelRadius=8;ssao.minDistance=.005;ssao.maxDistance=.12;ssao.enabled=false;composer.addPass(ssao);
-const bloom=new UnrealBloomPass(new THREE.Vector2(innerWidth,innerHeight),.22,.55,1.05);composer.addPass(bloom);
+const composer=new EffectComposer(renderer);composer.setPixelRatio(isMobile?.85:Math.min(devicePixelRatio,1));const basePass=new RenderPass(scene,camera);composer.addPass(basePass);
+const ssr=isMobile?{enabled:false,selects:[]}:new SSRPass({renderer,scene,camera,width:Math.max(1,innerWidth),height:Math.max(1,innerHeight),selects:[]});
+if(!isMobile){ssr.resolutionScale=.4;ssr.opacity=.22;ssr.maxDistance=12;ssr.thickness=.025;ssr.enabled=false;composer.addPass(ssr)}
+const ssao=isMobile?{enabled:false}:new SSAOPass(scene,camera,Math.max(1,innerWidth),Math.max(1,innerHeight),16);
+if(!isMobile){ssao.kernelRadius=8;ssao.minDistance=.005;ssao.maxDistance=.12;ssao.enabled=false;composer.addPass(ssao)}
+const bloom=new UnrealBloomPass(new THREE.Vector2(Math.max(1,innerWidth),Math.max(1,innerHeight)),.22,.55,1.05);composer.addPass(bloom);
 const grading=new ShaderPass({uniforms:{tDiffuse:{value:null},strength:{value:0}},vertexShader:'varying vec2 vUv; void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',fragmentShader:`uniform sampler2D tDiffuse; uniform float strength; varying vec2 vUv; void main(){vec4 c=texture2D(tDiffuse,vUv);float l=dot(c.rgb,vec3(.2126,.7152,.0722));vec3 shadow=vec3(.035,.012,.065)*(1.0-smoothstep(.05,.48,l));vec3 highlight=vec3(.005,.025,.035)*smoothstep(.18,.8,l);vec3 graded=(c.rgb-.18)*1.10+.18+shadow+highlight;graded=mix(vec3(dot(graded,vec3(.2126,.7152,.0722))),graded,1.09);float vig=1.0-.12*smoothstep(.20,.82,length(vUv-.5));gl_FragColor=vec4(mix(c.rgb,graded*vig,strength),c.a);}`});composer.addPass(grading);composer.addPass(new OutputPass());
 const skyCanvas=document.createElement('canvas');skyCanvas.width=1024;skyCanvas.height=512;let skyCtx=skyCanvas.getContext('2d'),skyGradient=skyCtx.createLinearGradient(0,0,0,512);skyGradient.addColorStop(0,'#111731');skyGradient.addColorStop(.38,'#252653');skyGradient.addColorStop(.7,'#45436c');skyGradient.addColorStop(1,'#5c5474');skyCtx.fillStyle=skyGradient;skyCtx.fillRect(0,0,1024,512);
 let cloudSeed=731;function skyRand(){cloudSeed=(cloudSeed*16807)%2147483647;return cloudSeed/2147483647}for(let i=0;i<55;i++){let x=skyRand()*1024,y=210+skyRand()*125,w=15+skyRand()*90;let cloud=skyCtx.createRadialGradient(x,y,0,x,y,w);cloud.addColorStop(0,'rgba(255,255,255,.28)');cloud.addColorStop(1,'rgba(255,255,255,0)');skyCtx.fillStyle=cloud;skyCtx.fillRect(x-w,y-w,w*2,w*2)}
 const skyTex=new THREE.CanvasTexture(skyCanvas);skyTex.colorSpace=THREE.SRGBColorSpace;const arenaSky=new THREE.Mesh(new THREE.SphereGeometry(85,32,16),new THREE.MeshBasicMaterial({map:skyTex,side:THREE.BackSide,depthWrite:false,fog:false}));arenaSky.renderOrder=-100;arenaSky.visible=false;scene.add(arenaSky);
-function refreshWorld(){let isLobby=!room||phase==='lobby';bloom.strength=isLobby?.16:.12;grading.uniforms.strength.value=isLobby?0:.38;ssr.enabled=!isLobby&&!lowQuality&&currentMap!=='garden';ssao.enabled=!isLobby&&!lowQuality;basePass.enabled=!ssr.enabled;renderer.shadowMap.enabled=!isLobby&&!lowQuality;tealLight.visible=purpleLight.visible=!isLobby;arenaSky.visible=!isLobby;hemi.intensity=isLobby?.85:.58;sun.intensity=isLobby?.4:.8;scene.fog.color.setHex(isLobby?0x090d22:0x353251);scene.fog.near=isLobby?50:80;scene.fog.far=isLobby?120:150;fallbackWorld.visible=isLobby?!lobbyWorld:(currentMap==='colosseum'&&!arenaWorld);if(typeof spaceExterior!=='undefined')spaceExterior.visible=isLobby;if(lobbyWorld){lobbyWorld.visible=isLobby;lobbyWorld.scale.set(room&&roomMode==='hub'?1.9:1,room&&roomMode==='hub'?1.65:1,room&&roomMode==='hub'?1.9:1)}hubPortalWorld.visible=isLobby&&!!room&&roomMode==='hub';votePadWorld.visible=isLobby&&!!room&&roomMode==='private';if(arenaWorld)arenaWorld.visible=!isLobby&&currentMap==='colosseum';verticalWorld.visible=!isLobby&&currentMap==='colosseum';ductWorld.visible=!isLobby&&currentMap==='duct';stationWorld.visible=!isLobby&&currentMap==='station';neoWorld.visible=!isLobby&&currentMap==='neoball';if(typeof gardenWorld!=='undefined')gardenWorld.visible=!isLobby&&currentMap==='garden';if(crowdWorld)crowdWorld.visible=!isLobby&&currentMap==='colosseum'&&!lowQuality;arenaSky.visible=!isLobby&&(currentMap==='colosseum'||currentMap==='garden');if(!isLobby&&(currentMap==='duct'||currentMap==='station'||currentMap==='neoball')){scene.fog.color.setHex(0x101622);scene.fog.near=25;scene.fog.far=85;hemi.intensity=1.6;sun.intensity=1.0}else if(!isLobby&&currentMap==='garden'){scene.fog.color.setHex(0x162634);scene.fog.near=32;scene.fog.far=92;hemi.intensity=1.45;sun.intensity=.95}}
+function refreshWorld(){let isLobby=!room||phase==='lobby';bloom.strength=isLobby?.16:.12;grading.uniforms.strength.value=isLobby?0:.38;ssr.enabled=!isMobile&&!isLobby&&!lowQuality&&currentMap!=='garden';ssao.enabled=!isMobile&&!isLobby&&!lowQuality&&currentMap!=='garden';basePass.enabled=!ssr.enabled;renderer.shadowMap.enabled=!isMobile&&!isLobby&&!lowQuality;tealLight.visible=purpleLight.visible=!isLobby;arenaSky.visible=!isLobby;hemi.intensity=isLobby?.85:.58;sun.intensity=isLobby?.4:.8;scene.fog.color.setHex(isLobby?0x090d22:0x353251);scene.fog.near=isLobby?50:80;scene.fog.far=isLobby?120:150;fallbackWorld.visible=isLobby?!lobbyWorld:(currentMap==='colosseum'&&!arenaWorld);if(typeof spaceExterior!=='undefined')spaceExterior.visible=isLobby;if(lobbyWorld){lobbyWorld.visible=isLobby;lobbyWorld.scale.set(room&&roomMode==='hub'?1.9:1,room&&roomMode==='hub'?1.65:1,room&&roomMode==='hub'?1.9:1)}hubPortalWorld.visible=isLobby&&!!room&&roomMode==='hub';votePadWorld.visible=isLobby&&!!room&&roomMode==='private';if(arenaWorld)arenaWorld.visible=!isLobby&&currentMap==='colosseum';verticalWorld.visible=!isLobby&&currentMap==='colosseum';ductWorld.visible=!isLobby&&currentMap==='duct';stationWorld.visible=!isLobby&&currentMap==='station';neoWorld.visible=!isLobby&&currentMap==='neoball';if(typeof gardenWorld!=='undefined')gardenWorld.visible=!isLobby&&currentMap==='garden';if(crowdWorld)crowdWorld.visible=!isLobby&&currentMap==='colosseum'&&!lowQuality;arenaSky.visible=!isLobby&&(currentMap==='colosseum'||currentMap==='garden');if(!isLobby&&(currentMap==='duct'||currentMap==='station'||currentMap==='neoball')){scene.fog.color.setHex(0x101622);scene.fog.near=25;scene.fog.far=85;hemi.intensity=1.6;sun.intensity=1.0}else if(!isLobby&&currentMap==='garden'){scene.fog.color.setHex(0x162634);scene.fog.near=32;scene.fog.far=92;hemi.intensity=1.45;sun.intensity=.95}}
 function loadAsset(name){return loader.loadAsync('/assets/'+name+'.glb').then(g=>{g.scene.traverse(o=>{if(o.isMesh&&o.material){let m=o.material;let mn=m.name||o.name||'';if(m.emissive&&m.emissive.getHex()!==0)m.emissiveIntensity=(name==='colosseum_neon_arena'||name==='neon_crowd')?.85:1.5;if(m.isMeshStandardMaterial&&(/Armor|Metal|Bronze|Gold|Suit|Sand|Screen/i.test(mn))){ensureUV(o);m.roughnessMap=roughMap;m.envMap=reflectionEnv;m.envMapIntensity=.35;m.roughness=Math.max(.32,m.roughness);m.metalness=Math.max(.28,m.metalness);m.needsUpdate=true}if(name==='colosseum_neon_arena'){o.receiveShadow=true;o.castShadow=/Stone|Armor|Bronze/i.test(mn);if(/^(Sand|SandPatch|Bronze|ArmorIron)$/.test(mn))ssr.selects.push(o)}}});kitModels[name]=g.scene;return g.scene})}
 const glassCoverMat=new THREE.MeshStandardMaterial({color:0x6caebc,transparent:true,opacity:.42,roughness:.35,metalness:.1,depthWrite:false,side:THREE.DoubleSide});
 const verticalWorld=new THREE.Group();const concreteMat=new THREE.MeshStandardMaterial({color:0x35304e,roughness:.83,metalness:.12}),edgeMat=new THREE.MeshStandardMaterial({color:0x3fe2ee,emissive:0x126c83,emissiveIntensity:1.4});
@@ -220,7 +226,9 @@ const flowerBedMat=new THREE.MeshStandardMaterial({color:0x5d687d,roughness:.82}
 const houseRugMat=new THREE.MeshStandardMaterial({color:0xb54b62,roughness:.9});
 const flowerColors=[0xff66b8,0x5ef7ff,0xffe85c,0xc97eff,0xff8e63];
 const flowerMats=flowerColors.map(c=>new THREE.MeshStandardMaterial({color:c,emissive:c,emissiveIntensity:.55}));
-function gardenBox(w,h,d,mat,x,y,z){let m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);m.position.set(x,y,z);m.receiveShadow=true;m.castShadow=h>1.2;gardenWorld.add(m);return m}
+const gardenUnitBox=new THREE.BoxGeometry(1,1,1);
+const flowerStemPositions=[],flowerBloomPositions=[];
+function gardenBox(w,h,d,mat,x,y,z){let m=new THREE.Mesh(gardenUnitBox,mat);m.scale.set(w,h,d);m.position.set(x,y,z);m.receiveShadow=true;m.castShadow=h>1.2;gardenWorld.add(m);return m}
 // Main courtyard lawn + cross stone footpaths
 gardenBox(39,.3,39,gardenGrassMat,0,-.15,0);
 gardenBox(2.8,.04,37,gardenPathMat,0,.02,0);
@@ -237,6 +245,7 @@ for(let s of [-1,1]){
  }
 }
 // Build blocks from GARDEN_BLOCKS
+const treeTrunkGeo=new THREE.CylinderGeometry(.38,.52,2.8,8);
 for(const b of GARDEN_BLOCKS){
  let bottom=b.bottom||0;
  if(b.kind==='house_wall'){
@@ -247,7 +256,7 @@ for(const b of GARDEN_BLOCKS){
   gardenBox(b.hx*2,b.h-bottom,b.hz*2,houseRoofMat,b.x,(b.h+bottom)/2,b.z);
   gardenBox(b.hx*2+.2,.12,b.hz*2+.2,houseGlowMat,b.x,b.h+.05,b.z);
  }else if(b.kind==='trunk'){
-  let tr=new THREE.Mesh(new THREE.CylinderGeometry(.38,.52,b.h,8),barkMat);tr.position.set(b.x,b.h/2,b.z);tr.castShadow=tr.receiveShadow=true;gardenWorld.add(tr);
+  let tr=new THREE.Mesh(treeTrunkGeo,barkMat);tr.scale.set(1,b.h/2.8,1);tr.position.set(b.x,b.h/2,b.z);tr.castShadow=tr.receiveShadow=true;gardenWorld.add(tr);
  }else if(b.kind==='canopy_low'||b.kind==='canopy_top'){
   let matLeaf=b.kind==='canopy_low'?leafLowMat:leafTopMat;
   gardenBox(b.hx*2,b.h-bottom,b.hz*2,matLeaf,b.x,(b.h+bottom)/2,b.z);
@@ -258,27 +267,34 @@ for(const b of GARDEN_BLOCKS){
   let count=Math.max(4,Math.floor(b.hx*b.hz*2.5));
   for(let fi=0;fi<count;fi++){
    let fx=b.x+((fi*1.37)%(b.hx*1.5))-b.hx*.75,fz=b.z+((fi*1.91)%(b.hz*1.5))-b.hz*.75;
-   gardenBox(.07,.24,.07,leafTopMat,fx,b.h+.12,fz);
-   gardenBox(.22,.16,.22,flowerMats[fi%flowerMats.length],fx,b.h+.27,fz);
+   flowerStemPositions.push([fx,b.h+.12,fz,.07,.24,.07]);
+   flowerBloomPositions.push([fx,b.h+.27,fz,.22,.16,.22,flowerColors[fi%flowerColors.length]]);
   }
  }
 }
 // Cottage decorative doorway frames, warm interior rugs & lanterns
 for(const [hx,hz,doorS,doorE] of [[-10,-4,[0,3.35],[3.35,0]],[10,4,[0,-3.35],[-3.35,0]]]){
  gardenBox(4.2,.04,4.2,houseRugMat,hx,.025,hz);
- let hLight=new THREE.PointLight(0xffcf88,18,12,2);hLight.position.set(hx,2.6,hz);gardenWorld.add(hLight);
- gardenBox(.4,.32,.4,houseGlowMat,hx,3.2,hz);
+ gardenBox(.48,.36,.48,houseGlowMat,hx,3.18,hz);
  // Glowing doorway arches
  gardenBox(2.9,.18,.38,houseGlowMat,hx+doorS[0],2.75,hz+doorS[1]);
  gardenBox(.38,.18,2.9,houseGlowMat,hx+doorE[0],2.75,hz+doorE[1]);
 }
-// Scattered lawn flowers & clover clusters
+// Scattered lawn flowers & clover clusters (instanced to minimize draw calls)
 for(let i=0;i<52;i++){
  let fx=((i*7.13)%32)-16,fz=((i*11.47)%32)-16;
  if(Math.abs(fx)<1.8||Math.abs(fz)<1.8)continue;
  if((Math.abs(fx+10)<4.2&&Math.abs(fz+4)<4.2)||(Math.abs(fx-10)<4.2&&Math.abs(fz-4)<4.2))continue;
- gardenBox(.06,.20,.06,leafTopMat,fx,.10,fz);
- gardenBox(.20,.14,.20,flowerMats[i%flowerMats.length],fx,.22,fz);
+ flowerStemPositions.push([fx,.10,fz,.06,.20,.06]);
+ flowerBloomPositions.push([fx,.22,fz,.20,.14,.20,flowerColors[i%flowerColors.length]]);
+}
+if(flowerStemPositions.length){
+ const stemInst=new THREE.InstancedMesh(gardenUnitBox,leafTopMat,flowerStemPositions.length);
+ const bloomInst=new THREE.InstancedMesh(gardenUnitBox,new THREE.MeshBasicMaterial({color:0xffffff}),flowerBloomPositions.length);
+ const fdummy=new THREE.Object3D(),fcol=new THREE.Color();
+ flowerStemPositions.forEach(([x,y,z,sx,sy,sz],i)=>{fdummy.position.set(x,y,z);fdummy.scale.set(sx,sy,sz);fdummy.updateMatrix();stemInst.setMatrixAt(i,fdummy.matrix)});
+ flowerBloomPositions.forEach(([x,y,z,sx,sy,sz,c],i)=>{fdummy.position.set(x,y,z);fdummy.scale.set(sx,sy,sz);fdummy.updateMatrix();bloomInst.setMatrixAt(i,fdummy.matrix);fcol.setHex(c);bloomInst.setColorAt(i,fcol)});
+ gardenWorld.add(stemInst,bloomInst);
 }
 // Floating twilight fireflies & petals in garden
 const fireflyCount=90,fireflyPos=new Float32Array(fireflyCount*3),fireflyData=[];
@@ -735,7 +751,8 @@ function hubPoster(x,z,title,subtitle,color){let can=document.createElement('can
 hubPoster(-15.8,-13.5,'РЕКЛАМА','МЕСТО ДЛЯ ПАРТНЁРОВ','#72cedd');hubPoster(15.8,-13.5,'ПОДДЕРЖАТЬ ИГРУ','ДОНАТ · ЗАГЛУШКА','#e5bd83');scene.add(hubPortalWorld);
 scene.add(lobbyWorld);refreshWorld();
 loadAsset('neon_crowd').then(o=>{o.scale.set(2,1,2);crowdWorld=o;scene.add(o);refreshWorld()}).catch(e=>console.error('Зрители не загрузились',e));
-$('#quality').onclick=()=>{lowQuality=!lowQuality;$('#quality').textContent=lowQuality?'✦ Лёгкая':'✦ Высокая';composer.setPixelRatio(lowQuality?.65:Math.min(devicePixelRatio,1.15));refreshWorld()};
+$('#quality').textContent=lowQuality?'✦ Лёгкая':'✦ Высокая';
+$('#quality').onclick=()=>{lowQuality=!lowQuality;$('#quality').textContent=lowQuality?'✦ Лёгкая':'✦ Высокая';composer.setPixelRatio(lowQuality?.65:(isMobile?1:Math.min(devicePixelRatio,1.15)));refreshWorld()};
 
 const heroBoxGeo=new THREE.BoxGeometry(1,1,1), heroMaterials=new Map();
 function heroMaterial(color, glow=false){let key=color+':'+glow;if(!heroMaterials.has(key))heroMaterials.set(key,new THREE.MeshStandardMaterial({color,roughness:glow?.34:.56,metalness:glow?.24:.12,emissive:glow?color:0x000000,emissiveIntensity:glow?.38:0}));return heroMaterials.get(key)}
@@ -785,12 +802,12 @@ function avatar(l, teamRole=null){
   const markMat=new THREE.MeshBasicMaterial({color:0x7634b8});
   const eyeGlowMat=new THREE.MeshBasicMaterial({color:0xff44c8});
   for(const side of [-1,1]){
-   let hole=new THREE.Mesh(new THREE.BoxGeometry(.075,.048,.03),darkFeature);hole.position.set(side*.095,1.73,-.325);root.add(hole);
-   let glint=new THREE.Mesh(new THREE.BoxGeometry(.026,.024,.035),eyeGlowMat);glint.position.set(side*.095,1.73,-.33);root.add(glint);
-   let brow=new THREE.Mesh(new THREE.BoxGeometry(.06,.055,.025),markMat);brow.position.set(side*.095,1.83,-.318);root.add(brow);
-   let cheek=new THREE.Mesh(new THREE.BoxGeometry(.045,.11,.025),markMat);cheek.position.set(side*.095,1.61,-.318);root.add(cheek);
+   let hole=new THREE.Mesh(heroBoxGeo,darkFeature);hole.scale.set(.075,.048,.03);hole.position.set(side*.095,1.73,-.325);root.add(hole);
+   let glint=new THREE.Mesh(heroBoxGeo,eyeGlowMat);glint.scale.set(.026,.024,.035);glint.position.set(side*.095,1.73,-.33);root.add(glint);
+   let brow=new THREE.Mesh(heroBoxGeo,markMat);brow.scale.set(.06,.055,.025);brow.position.set(side*.095,1.83,-.318);root.add(brow);
+   let cheek=new THREE.Mesh(heroBoxGeo,markMat);cheek.scale.set(.045,.11,.025);cheek.position.set(side*.095,1.61,-.318);root.add(cheek);
   }
-  let mouth=new THREE.Mesh(new THREE.BoxGeometry(.13,.032,.028),darkFeature);mouth.position.set(0,1.50,-.318);root.add(mouth);
+  let mouth=new THREE.Mesh(heroBoxGeo,darkFeature);mouth.scale.set(.13,.032,.028);mouth.position.set(0,1.50,-.318);root.add(mouth);
   // Ghostly trailing tendrils + glowing Chaser highlight ring
   const wisps=new THREE.Group();root.add(wisps);root.userData.wisps=wisps;
   for(let i=0;i<6;i++){
@@ -1006,8 +1023,8 @@ for(const file of ['blaster_smg','blaster_rifle'])loadAsset(file).then(()=>{if(r
 
 let previewRenderer, previewScene, previewCamera, previewFigure;
 try {
- previewRenderer=new THREE.WebGLRenderer({canvas:$('#avatar-preview'),antialias:true,alpha:true});
- previewRenderer.setPixelRatio(Math.min(devicePixelRatio,1.5)); previewRenderer.setSize(180,180,false);
+ previewRenderer=new THREE.WebGLRenderer({canvas:$('#avatar-preview'),antialias:!isMobile,alpha:true,powerPreference:'low-power'});
+ previewRenderer.setPixelRatio(isMobile?1:Math.min(devicePixelRatio,1.5)); previewRenderer.setSize(180,180,false);
  previewScene=new THREE.Scene(); previewScene.add(new THREE.HemisphereLight(0xffffff,0x6470a9,2.2));
  let light=new THREE.DirectionalLight(0xffffff,2);light.position.set(3,5,5);previewScene.add(light);
  previewCamera=new THREE.PerspectiveCamera(38,1,.1,30);previewCamera.position.set(1.5,1.6,-3.1);previewCamera.lookAt(0,1.05,0);
@@ -1196,14 +1213,16 @@ function triggerChaserBanner(m){
   title.textContent='YOU ARE A CHASER';
   sub.textContent='У вас 400 HP · Поймайте всех выживших!';
   haptic('heavy');
-  try{
-   if('speechSynthesis' in window&&typeof SpeechSynthesisUtterance!=='undefined'&&!muted){
-    window.speechSynthesis.cancel();
-    let u=new SpeechSynthesisUtterance('You are a chaser');
-    u.lang='en-US';u.pitch=.72;u.rate=.88;u.volume=.95;
-    window.speechSynthesis.speak(u);
-   }
-  }catch{}
+  if(!isMobile){
+   setTimeout(()=>{try{
+    if('speechSynthesis' in window&&typeof SpeechSynthesisUtterance!=='undefined'&&!muted){
+     window.speechSynthesis.cancel();
+     let u=new SpeechSynthesisUtterance('You are a chaser');
+     u.lang='en-US';u.pitch=.72;u.rate=.88;u.volume=.95;
+     window.speechSynthesis.speak(u);
+    }
+   }catch{}},40);
+  }
  }else{
   title.textContent='ОХОТНИК: '+String(m.chaserName||'CHASER').toUpperCase();
   sub.textContent='Спасайтесь в саду и домиках · Победите духа командой!';
@@ -1420,4 +1439,4 @@ function frame(t){
  updateDamageNumbers(t);let firedFrame=muzzlePending;muzzlePending=false;muzzleLight.intensity=firedFrame?18:0;$('#muzzleflash').style.opacity=firedFrame?'1':'0';composer.render();muzzleLight.intensity=0;
  }catch(err){console.error('Frame error:',err)}
 }
-requestAnimationFrame(frame);window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);composer.setSize(innerWidth,innerHeight)});
+requestAnimationFrame(frame);window.addEventListener('resize',()=>{let w=Math.max(1,innerWidth),h=Math.max(1,innerHeight);camera.aspect=w/h;camera.updateProjectionMatrix();renderer.setSize(w,h);composer.setSize(w,h)});
