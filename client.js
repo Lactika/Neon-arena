@@ -10,7 +10,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { constrainPosition, wallContact, wallSlideVelocity, JumpWindow, WallKickLock, ARENA_RX, ARENA_RZ, VERTICAL_BLOCKS, DUCT_BLOCKS, STATION_BLOCKS, NEO_BLOCKS, GARDEN_BLOCKS, DESTRUCTIBLE_PRESETS, CONTROL_POINT, VOTE_ZONES, HUB_ZONES, groundHeight, landingHeight, shotWallDistance } from './physics.js';
 const $=s=>document.querySelector(s), menu=$('#menu'), hud=$('#hud');
 const isMobile=/Android|iPhone|iPad|iPod|Mobile|Telegram/i.test(navigator.userAgent)||(navigator.maxTouchPoints>1&&Math.min(innerWidth,innerHeight)<900);
-let userLandscapeOverride=null;
+let userLandscapeOverride=null,rendererReady=false;
 function isForcedLandscape(){
  if(!isMobile||innerWidth>=innerHeight)return false;
  if(userLandscapeOverride===false)return false;
@@ -23,11 +23,11 @@ function pointerXY(e){
  return {x:e.clientY,y:innerWidth-e.clientX};
 }
 function syncRendererSize(){
- if(typeof camera==='undefined'||typeof renderer==='undefined')return;
+ if(!rendererReady)return;
  let w=viewW(),h=viewH();
  camera.aspect=w/h;camera.updateProjectionMatrix();
  renderer.setSize(w,h);
- if(typeof composer!=='undefined')composer.setSize(w,h);
+ composer.setSize(w,h);
 }
 function syncOrientationLayout(){
  document.documentElement.style.setProperty('--real-w',innerWidth+'px');
@@ -212,7 +212,7 @@ if(!isMobile){ssr.resolutionScale=.4;ssr.opacity=.22;ssr.maxDistance=12;ssr.thic
 const ssao=isMobile?{enabled:false}:new SSAOPass(scene,camera,Math.max(1,innerWidth),Math.max(1,innerHeight),16);
 if(!isMobile){ssao.kernelRadius=8;ssao.minDistance=.005;ssao.maxDistance=.12;ssao.enabled=false;composer.addPass(ssao)}
 const bloom=new UnrealBloomPass(new THREE.Vector2(Math.max(1,innerWidth),Math.max(1,innerHeight)),.22,.55,1.05);composer.addPass(bloom);
-const grading=new ShaderPass({uniforms:{tDiffuse:{value:null},strength:{value:0}},vertexShader:'varying vec2 vUv; void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',fragmentShader:`uniform sampler2D tDiffuse; uniform float strength; varying vec2 vUv; void main(){vec4 c=texture2D(tDiffuse,vUv);float l=dot(c.rgb,vec3(.2126,.7152,.0722));vec3 shadow=vec3(.035,.012,.065)*(1.0-smoothstep(.05,.48,l));vec3 highlight=vec3(.005,.025,.035)*smoothstep(.18,.8,l);vec3 graded=(c.rgb-.18)*1.10+.18+shadow+highlight;graded=mix(vec3(dot(graded,vec3(.2126,.7152,.0722))),graded,1.09);float vig=1.0-.12*smoothstep(.20,.82,length(vUv-.5));gl_FragColor=vec4(mix(c.rgb,graded*vig,strength),c.a);}`});composer.addPass(grading);composer.addPass(new OutputPass());
+const grading=new ShaderPass({uniforms:{tDiffuse:{value:null},strength:{value:0}},vertexShader:'varying vec2 vUv; void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',fragmentShader:`uniform sampler2D tDiffuse; uniform float strength; varying vec2 vUv; void main(){vec4 c=texture2D(tDiffuse,vUv);float l=dot(c.rgb,vec3(.2126,.7152,.0722));vec3 shadow=vec3(.035,.012,.065)*(1.0-smoothstep(.05,.48,l));vec3 highlight=vec3(.005,.025,.035)*smoothstep(.18,.8,l);vec3 graded=(c.rgb-.18)*1.10+.18+shadow+highlight;graded=mix(vec3(dot(graded,vec3(.2126,.7152,.0722))),graded,1.09);float vig=1.0-.12*smoothstep(.20,.82,length(vUv-.5));gl_FragColor=vec4(mix(c.rgb,graded*vig,strength),c.a);}`});composer.addPass(grading);composer.addPass(new OutputPass());rendererReady=true;syncRendererSize();
 const skyCanvas=document.createElement('canvas');skyCanvas.width=1024;skyCanvas.height=512;let skyCtx=skyCanvas.getContext('2d'),skyGradient=skyCtx.createLinearGradient(0,0,0,512);skyGradient.addColorStop(0,'#111731');skyGradient.addColorStop(.38,'#252653');skyGradient.addColorStop(.7,'#45436c');skyGradient.addColorStop(1,'#5c5474');skyCtx.fillStyle=skyGradient;skyCtx.fillRect(0,0,1024,512);
 let cloudSeed=731;function skyRand(){cloudSeed=(cloudSeed*16807)%2147483647;return cloudSeed/2147483647}for(let i=0;i<55;i++){let x=skyRand()*1024,y=210+skyRand()*125,w=15+skyRand()*90;let cloud=skyCtx.createRadialGradient(x,y,0,x,y,w);cloud.addColorStop(0,'rgba(255,255,255,.28)');cloud.addColorStop(1,'rgba(255,255,255,0)');skyCtx.fillStyle=cloud;skyCtx.fillRect(x-w,y-w,w*2,w*2)}
 const skyTex=new THREE.CanvasTexture(skyCanvas);skyTex.colorSpace=THREE.SRGBColorSpace;const arenaSky=new THREE.Mesh(new THREE.SphereGeometry(85,32,16),new THREE.MeshBasicMaterial({map:skyTex,side:THREE.BackSide,depthWrite:false,fog:false}));arenaSky.renderOrder=-100;arenaSky.visible=false;scene.add(arenaSky);
