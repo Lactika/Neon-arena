@@ -253,17 +253,23 @@ function updateHubQueues(){
 }
 function leave(c){let room=rooms.get(c.code);if(!room)return;let departing=room.players.get(c.id);if(departing)dropNeoBall(room,departing);room.players.delete(c.id);let hasHumans=[...room.players.values()].some(p=>!p.isBot);if(room.mode!=='hub'&&!hasHumans){rooms.delete(room.code);c.code=null;return}if((room.mode==='neoball'||room.mode==='control')&&room.phase==='match'&&room.players.size){let alive=[...room.players.values()],teams=new Set(alive.map(p=>p.team));if(teams.size===1)finish(room,alive[0].team)}if(room.mode==='chaser'&&room.phase==='match'&&departing){if(departing.team==='chaser')finish(room,'survivors');else if(![...room.players.values()].some(p=>p.team==='survivor'&&!p.eliminated))finish(room,'chaser')}if(room.mode==='hub'){updateHubQueues();sync(room)}else if(!room.players.size)rooms.delete(room.code);else sync(room);c.code=null}
 let htmlCache={mtime:0,raw:null,gz:null};
+async function loadHtmlCache(){
+ let u=new URL('./index.html',import.meta.url),st=await stat(u);
+ if(st.mtimeMs!==htmlCache.mtime||!htmlCache.raw){
+  let raw=await readFile(u);
+  htmlCache={mtime:st.mtimeMs,raw,gz:gzipSync(raw,{level:6})};
+ }
+ return htmlCache;
+}
 const server=http.createServer(async(req,res)=>{try{
- let path=req.url.split('?')[0];let file=/^\/assets\/[a-z0-9_]+\.glb$/.test(path)?path.slice(1):/^\/assets\/audio\/[a-z0-9_]+\.mp3$/.test(path)?path.slice(1):path==='/'||path==='/index.html'?'index.html':null;
+ let path=(req.url||'/').split('?')[0];
+ if(path==='/healthz'||path==='/ping'){res.writeHead(200,{'Content-Type':'text/plain','Cache-Control':'no-store'});res.end(req.method==='HEAD'?undefined:'ok');return}
+ let file=/^\/assets\/[a-z0-9_]+\.glb$/.test(path)?path.slice(1):/^\/assets\/audio\/[a-z0-9_]+\.mp3$/.test(path)?path.slice(1):path==='/'||path==='/index.html'?'index.html':null;
  if(!file){res.writeHead(404);res.end('Not found');return}
  if(file==='index.html'){
-  let u=new URL('./index.html',import.meta.url),st=await stat(u);
-  if(st.mtimeMs!==htmlCache.mtime||!htmlCache.raw){
-   let raw=await readFile(u);
-   htmlCache={mtime:st.mtimeMs,raw,gz:gzipSync(raw,{level:6})};
-  }
+  let c=await loadHtmlCache();
   let wantsGzip=/\bgzip\b/i.test(req.headers['accept-encoding']||'');
-  let body=wantsGzip?htmlCache.gz:htmlCache.raw;
+  let body=wantsGzip?c.gz:c.raw;
   let headers={'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','Vary':'Accept-Encoding','Content-Length':body.length};
   if(wantsGzip)headers['Content-Encoding']='gzip';
   res.writeHead(200,headers);res.end(req.method==='HEAD'?undefined:body);return;
@@ -948,4 +954,7 @@ setInterval(()=>{
  }
 },100);
 const port = Number(process.env.PORT) || 3001;
-server.listen(port,'0.0.0.0',()=>console.log(`Arena server on ${port}`));
+server.listen(port,'0.0.0.0',()=>{
+ console.log(`Arena server on ${port}`);
+ loadHtmlCache().catch(e=>console.error('Warmup error:',e));
+});
