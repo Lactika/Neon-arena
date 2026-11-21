@@ -1,7 +1,8 @@
 import {constrainPosition,wallContact,groundHeight,landingHeight,voteAt,shotWallDistance,shotWallHit,HUB_ZONES,DESTRUCTIBLE_PRESETS,CONTROL_POINT} from './physics.js';
 import http from 'node:http';
 import {WebSocketServer} from 'ws';
-import {readFile} from 'node:fs/promises';
+import {readFile,stat} from 'node:fs/promises';
+import {gzipSync} from 'node:zlib';
 import {randomUUID, randomInt} from 'node:crypto';
 const rooms=new Map(), clients=new Map();
 const weapons={smg:{name:'ПП «Воздушный Ткач»',price:0,damage:12,rate:80,range:30,spread:.03},shotgun:{name:'Дробовик «Кинетический Бластер»',price:0,damage:91,rate:700,range:15,spread:.15,pellets:7}};
@@ -251,9 +252,23 @@ function updateHubQueues(){
  }
 }
 function leave(c){let room=rooms.get(c.code);if(!room)return;let departing=room.players.get(c.id);if(departing)dropNeoBall(room,departing);room.players.delete(c.id);let hasHumans=[...room.players.values()].some(p=>!p.isBot);if(room.mode!=='hub'&&!hasHumans){rooms.delete(room.code);c.code=null;return}if((room.mode==='neoball'||room.mode==='control')&&room.phase==='match'&&room.players.size){let alive=[...room.players.values()],teams=new Set(alive.map(p=>p.team));if(teams.size===1)finish(room,alive[0].team)}if(room.mode==='chaser'&&room.phase==='match'&&departing){if(departing.team==='chaser')finish(room,'survivors');else if(![...room.players.values()].some(p=>p.team==='survivor'&&!p.eliminated))finish(room,'chaser')}if(room.mode==='hub'){updateHubQueues();sync(room)}else if(!room.players.size)rooms.delete(room.code);else sync(room);c.code=null}
+let htmlCache={mtime:0,raw:null,gz:null};
 const server=http.createServer(async(req,res)=>{try{
  let path=req.url.split('?')[0];let file=/^\/assets\/[a-z0-9_]+\.glb$/.test(path)?path.slice(1):/^\/assets\/audio\/[a-z0-9_]+\.mp3$/.test(path)?path.slice(1):path==='/'||path==='/index.html'?'index.html':null;
- if(!file){res.writeHead(404);res.end('Not found');return}let data;try{data=await readFile(new URL('./'+file,import.meta.url))}catch(err){if(file.startsWith('assets/')&&err.code==='ENOENT'){let fallback=file.startsWith('assets/audio/')?file.slice('assets/audio/'.length):file.slice(7);try{data=await readFile(new URL('./'+fallback,import.meta.url))}catch(e){if(e.code==='ENOENT'){res.writeHead(404);res.end('Not found');return}throw e}}else if(err.code==='ENOENT'){res.writeHead(404);res.end('Not found');return}else throw err}
+ if(!file){res.writeHead(404);res.end('Not found');return}
+ if(file==='index.html'){
+  let u=new URL('./index.html',import.meta.url),st=await stat(u);
+  if(st.mtimeMs!==htmlCache.mtime||!htmlCache.raw){
+   let raw=await readFile(u);
+   htmlCache={mtime:st.mtimeMs,raw,gz:gzipSync(raw,{level:6})};
+  }
+  let wantsGzip=/\bgzip\b/i.test(req.headers['accept-encoding']||'');
+  let body=wantsGzip?htmlCache.gz:htmlCache.raw;
+  let headers={'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','Vary':'Accept-Encoding','Content-Length':body.length};
+  if(wantsGzip)headers['Content-Encoding']='gzip';
+  res.writeHead(200,headers);res.end(req.method==='HEAD'?undefined:body);return;
+ }
+ let data;try{data=await readFile(new URL('./'+file,import.meta.url))}catch(err){if(file.startsWith('assets/')&&err.code==='ENOENT'){let fallback=file.startsWith('assets/audio/')?file.slice('assets/audio/'.length):file.slice(7);try{data=await readFile(new URL('./'+fallback,import.meta.url))}catch(e){if(e.code==='ENOENT'){res.writeHead(404);res.end('Not found');return}throw e}}else if(err.code==='ENOENT'){res.writeHead(404);res.end('Not found');return}else throw err}
  let isAudio=file.endsWith('.mp3'),headers={'Content-Type':isAudio?'audio/mpeg':file.endsWith('.glb')?'model/gltf-binary':'text/html; charset=utf-8','Cache-Control':isAudio||file.endsWith('.glb')?'public, max-age=86400':'no-store'};
  if(isAudio){headers['Accept-Ranges']='bytes';let range=req.headers.range;if(range){let m=/^bytes=(\d*)-(\d*)$/.exec(range);if(!m||(!m[1]&&!m[2])){res.writeHead(416,{'Content-Range':`bytes */${data.length}`});res.end();return}let start=m[1]?Number(m[1]):Math.max(0,data.length-Number(m[2])),end=m[1]?(m[2]?Math.min(Number(m[2]),data.length-1):data.length-1):data.length-1;if(start>=data.length||end<start){res.writeHead(416,{'Content-Range':`bytes */${data.length}`});res.end();return}headers['Content-Range']=`bytes ${start}-${end}/${data.length}`;headers['Content-Length']=end-start+1;res.writeHead(206,headers);res.end(req.method==='HEAD'?undefined:data.subarray(start,end+1));return}}
  headers['Content-Length']=data.length;res.writeHead(200,headers);res.end(req.method==='HEAD'?undefined:data)
