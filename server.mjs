@@ -101,7 +101,7 @@ function fillRoomBots(room,targetCount){
 }
 function state(room){
  let teamUps=null;
- if(room.phase==='match'&&(room.mode==='control'||room.mode==='neoball')){
+ if(room.phase==='match'&&room.mode==='neoball'){
   teamUps={A:teamSynergies(room,'A'),B:teamSynergies(room,'B')};
  }
  return {type:'state',now:Date.now(),code:room.code,map:room.map,phase:room.phase,mode:room.mode||'private',ends:room.ends,epoch:room.epoch,countdown:room.countdown||0,sector:room.sector||0,votes:room.phase==='lobby'&&room.mode!=='hub'?voteCounts(room):null,queues:room.mode==='hub'?HUB_ZONES.map(z=>({id:z.id,capacity:z.capacity,minPlayers:z.minPlayers||z.capacity,mode:z.mode||'classic',count:[...room.players.values()].filter(p=>p.queue===z.id).length,ends:room.queues[z.id].ends})):null,neo:room.neo||null,chaser:room.chaser||null,control:room.control||null,teamUps,destructibles:room.destructibles||null,sanctuaries:room.sanctuaries||null,players:[...room.players.values()].map(({ws,ai,botChoice,botPromptedZone,lastShot,lastMove,lastBounce,slideAt,lastKickWall,...p})=>p),results:room.results};
@@ -109,7 +109,7 @@ function state(room){
 function sync(room){broadcast(room,state(room))}
 const NEO_DURATION=Number(process.env.NEO_DURATION_MS)||300000,NEO_RESET=Number(process.env.NEO_RESET_MS)||3000;
 function neoSpawn(p,i){return {x:(i<2?-3:3),z:p.team==='A'?-55:55}}
-function controlSpawn(p,i){return {x:p.team==='A'?-17.5:17.5,z:((i%3)-1)*5.5}}
+function controlSpawn(p,i){let a=(i%3)*(Math.PI*2/3);return {x:Math.sin(a)*16.5,z:Math.cos(a)*16.5}}
 function respawnPos(room,p){
  let list=[...room.players.values()],i=Math.max(0,list.indexOf(p));
  if(room.mode==='neoball')return neoSpawn(p,i);
@@ -125,7 +125,8 @@ function tryStartRoom(room){
    room.countdown=0;
    if(!room.botPrompted){
     room.botPrompted=true;
-    send(humans[0].ws,{type:'bot_prompt',mode:room.privateMode||'private',capacity:4,currentCount:1,botsToAdd:3});
+    let cap=room.privateMode==='control'?3:4;
+    send(humans[0].ws,{type:'bot_prompt',mode:room.privateMode||'private',capacity:cap,currentCount:1,botsToAdd:cap-1});
    }
    sync(room);return;
   }
@@ -135,7 +136,8 @@ function tryStartRoom(room){
 function start(room){
  if(room.mode==='private'){
   let humans=[...room.players.values()].filter(p=>!p.isBot);
-  if(humans.length===1&&room.players.size<4)fillRoomBots(room,4);
+  let target=room.privateMode==='control'?3:4;
+  if(humans.length===1&&room.players.size<target)fillRoomBots(room,target);
   room.botConsent=false;room.botPrompted=false;
   if(room.privateMode==='control')room.mode='control';
  }
@@ -146,12 +148,12 @@ function start(room){
  const presetsDest=DESTRUCTIBLE_PRESETS[room.map];
  room.destructibles=presetsDest?presetsDest.map(d=>({...d})):null;
  if(room.mode==='neoball')room.neo={scores:{A:0,B:0},ball:{status:'center',holder:null,x:0,y:0,z:0},resetAt:0,overtime:false,winner:null};
- if(room.mode==='control')room.control={owner:null,contested:false,capTeam:null,capProgress:0,scores:{A:0,B:0},winner:null,point:CONTROL_POINT};
+ if(room.mode==='control')room.control={ownerId:null,ownerName:null,contested:false,capturingId:null,capturingName:null,capture:0,progress:{},winnerId:null,point:CONTROL_POINT};
  let list=[...room.players.values()],chaserIdx=room.mode==='chaser'?randomInt(0,Math.max(1,list.length)):-1;
  let chaserPlayer=chaserIdx>=0?list[chaserIdx]:null;
  if(chaserPlayer)room.chaser={chaserId:chaserPlayer.id,chaserName:chaserPlayer.name,winner:null};
  // Ensure balanced roles for bots on team modes so Tank+DPS+Support synergies appear!
- if(room.mode==='control'||room.mode==='neoball'){
+ if(room.mode==='neoball'){
   const teamRoles={A:new Set(),B:new Set()};
   for(let i=0;i<list.length;i++){
    let p=list[i];
@@ -167,14 +169,15 @@ function start(room){
  let survIdx=0;
  for(let i=0;i<list.length;i++){
   let p=list[i];
-  if(room.mode==='neoball'||room.mode==='control')p.team=i%2===0?'A':'B';
+  if(room.mode==='neoball')p.team=i%2===0?'A':'B';
   else if(room.mode==='chaser')p.team=(i===chaserIdx?'chaser':'survivor');
   else p.team=null;
+  if(room.mode==='control'&&room.control)room.control.progress[p.id]=0;
   p.role=validRole(p.role||HERO_DEFAULT_ROLES[p.look?.character]);
   let rdef=ROLE_DEFS[p.role];
   let pos=room.mode==='neoball'?neoSpawn(p,i):room.mode==='control'?controlSpawn(p,i):null;
   let s=room.map==='garden'?(room.mode==='chaser'?(i===chaserIdx?gardenSpawns[0]:gardenSpawns[1+(survIdx++%4)]):gardenSpawns[i%gardenSpawns.length]):(room.map==='duct'||room.map==='station'?ductSpawns:spawns)[i%4];
-  let startHp=(room.mode==='chaser'&&p.team==='chaser')?400:rdef.maxHp;
+  let startHp=(room.mode==='chaser'&&p.team==='chaser')?800:rdef.maxHp;
   let startShield=(room.mode==='chaser'&&p.team==='chaser')?0:rdef.maxShield;
   Object.assign(p,{x:pos?pos.x:s[0],z:pos?pos.z:s[1],y:0,flip:0,seated:false,wallSliding:false,lastKickWall:null,hp:startHp,maxHp:startHp,shield:startShield,maxShield:startShield,shieldActive:false,shieldUntil:0,shieldBrokenAt:0,ultCharge:0,skill1ReadyAt:0,skill2ReadyAt:0,teamUpReadyAt:0,stunUntil:0,healDebuffUntil:0,overdriveUntil:0,boostUntil:0,lastDamagedAt:0,eliminated:false,kills:0,deaths:0,ready:false,respawnAt:0,invulnerableUntil:Date.now()+3000});
   if(p.ai)Object.assign(p.ai,{vy:0,stuckTicks:0,wanderUntil:0,strafeUntil:0,jumpAt:0,dashReadyAt:0});
@@ -183,7 +186,7 @@ function start(room){
   for(const p of list)send(p.ws,{type:'chaser_assigned',chaserId:chaserPlayer.id,chaserName:chaserPlayer.name,isMe:p.id===chaserPlayer.id});
   broadcast(room,{type:'notice',text:`CHASER: ${chaserPlayer.name}`});
  }else{
-  broadcast(room,{type:'notice',text:room.mode==='neoball'?'NEO-BALL · МЯЧ В ЦЕНТРЕ':room.mode==='control'?'ЗАХВАТ ТОЧКИ · ВПЕРЁД В ЦЕНТР!':'БОЙ НАЧАЛСЯ!'});
+  broadcast(room,{type:'notice',text:room.mode==='neoball'?'NEO-BALL · МЯЧ В ЦЕНТРЕ':room.mode==='control'?'ЗАХВАТ ТОЧКИ · КАЖДЫЙ ЗА СЕБЯ!':'БОЙ НАЧАЛСЯ!'});
  }
  sync(room);
 }
@@ -193,9 +196,13 @@ function finish(room,winner=null){
  for(const p of room.players.values()){p.respawnAt=0;p.shieldActive=false}
  if(room.neo){room.neo.capture=null;room.neo.winner=winner}
  if(room.chaser)room.chaser.winner=winner;
- if(room.control)room.control.winner=winner;
+ if(room.control)room.control.winnerId=winner;
  let a=[...room.players.values()].sort((a,b)=>{
-  if((room.neo||room.control)&&winner)return ((b.team===winner)-(a.team===winner))||b.kills-a.kills||a.deaths-b.deaths;
+  if(room.neo&&winner)return ((b.team===winner)-(a.team===winner))||b.kills-a.kills||a.deaths-b.deaths;
+  if(room.control){
+   let pa=room.control.progress?.[a.id]||0,pb=room.control.progress?.[b.id]||0;
+   if(pb!==pa)return pb-pa;
+  }
   if(room.chaser&&winner){
    let aWin=winner==='chaser'?a.team==='chaser':a.team==='survivor';
    let bWin=winner==='chaser'?b.team==='chaser':b.team==='survivor';
@@ -205,9 +212,9 @@ function finish(room,winner=null){
   return b.kills-a.kills||a.deaths-b.deaths;
  });
  room.results=a.map((p,i)=>{
-  let won=(room.neo||room.control)?(winner&&p.team===winner):room.chaser?(winner==='chaser'?p.team==='chaser':p.team==='survivor'):(i===0&&a.length>1);
+  let won=room.neo?(winner&&p.team===winner):room.control?(winner?p.id===winner:(i===0&&a.length>1)):room.chaser?(winner==='chaser'?p.team==='chaser':p.team==='survivor'):(i===0&&a.length>1);
   let reward=80+p.kills*20+(won?100:0);p.coins+=reward;
-  return {id:p.id,name:p.name,kills:p.kills,deaths:p.deaths,reward,look:p.look,role:p.role,team:p.team,eliminated:!!p.eliminated};
+  return {id:p.id,name:p.name,kills:p.kills,deaths:p.deaths,reward,look:p.look,role:p.role,team:p.team,eliminated:!!p.eliminated,scorePct:room.control?Math.round(room.control.progress?.[p.id]||0):undefined};
  });
  sync(room);
 }
@@ -251,7 +258,7 @@ function updateHubQueues(){
   }
  }
 }
-function leave(c){let room=rooms.get(c.code);if(!room)return;let departing=room.players.get(c.id);if(departing)dropNeoBall(room,departing);room.players.delete(c.id);let hasHumans=[...room.players.values()].some(p=>!p.isBot);if(room.mode!=='hub'&&!hasHumans){rooms.delete(room.code);c.code=null;return}if((room.mode==='neoball'||room.mode==='control')&&room.phase==='match'&&room.players.size){let alive=[...room.players.values()],teams=new Set(alive.map(p=>p.team));if(teams.size===1)finish(room,alive[0].team)}if(room.mode==='chaser'&&room.phase==='match'&&departing){if(departing.team==='chaser')finish(room,'survivors');else if(![...room.players.values()].some(p=>p.team==='survivor'&&!p.eliminated))finish(room,'chaser')}if(room.mode==='hub'){updateHubQueues();sync(room)}else if(!room.players.size)rooms.delete(room.code);else sync(room);c.code=null}
+function leave(c){let room=rooms.get(c.code);if(!room)return;let departing=room.players.get(c.id);if(departing)dropNeoBall(room,departing);room.players.delete(c.id);let hasHumans=[...room.players.values()].some(p=>!p.isBot);if(room.mode!=='hub'&&!hasHumans){rooms.delete(room.code);c.code=null;return}if(room.mode==='neoball'&&room.phase==='match'&&room.players.size){let alive=[...room.players.values()],teams=new Set(alive.map(p=>p.team));if(teams.size===1)finish(room,alive[0].team)}if(room.mode==='control'&&room.phase==='match'&&room.players.size===1){let last=[...room.players.values()][0];finish(room,last.id)}if(room.mode==='chaser'&&room.phase==='match'&&departing){if(departing.team==='chaser')finish(room,'survivors');else if(![...room.players.values()].some(p=>p.team==='survivor'&&!p.eliminated))finish(room,'chaser')}if(room.mode==='hub'){updateHubQueues();sync(room)}else if(!room.players.size)rooms.delete(room.code);else sync(room);c.code=null}
 let htmlCache={mtime:0,raw:null,gz:null};
 async function loadHtmlCache(){
  let u=new URL('./index.html',import.meta.url),st=await stat(u);
@@ -346,7 +353,7 @@ function applyDamage(room,attacker,target,rawDmg,now,headshot=false){
 }
 function isFriendly(room,a,b){
  if(!a||!b)return false;
- if(room.mode==='neoball'||room.mode==='control')return a.team&&a.team===b.team;
+ if(room.mode==='neoball')return a.team&&a.team===b.team;
  if(room.mode==='chaser')return a.team==='survivor'&&b.team==='survivor';
  return false;
 }
@@ -776,9 +783,9 @@ function tickBots(room,now,dt){
    }
   }else if(room.mode==='control'&&room.control){
    let distPt=Math.hypot(bot.x-CONTROL_POINT.x,bot.z-CONTROL_POINT.z);
-   let needPoint=room.control.owner!==bot.team||room.control.contested||distPt>CONTROL_POINT.radius*0.85;
+   let needPoint=room.control.ownerId!==bot.id||room.control.contested||distPt>CONTROL_POINT.radius*0.85;
    if(needPoint&&distPt>2.5){
-    goalX=CONTROL_POINT.x+ai.strafeDir*2.2;goalZ=CONTROL_POINT.z+(bot.team==='A'?-1.5:1.5);
+    goalX=CONTROL_POINT.x+ai.strafeDir*2.2;goalZ=CONTROL_POINT.z+(ai.strafeDir>0?-1.5:1.5);
    }else if(healAlly&&healAllyDist>6){
     goalX=healAlly.x;goalZ=healAlly.z;
    }else if(visibleEnemy){
@@ -906,47 +913,62 @@ setInterval(()=>{
      }
     }
    }
-   // Control Point capture & Contested state tick
+   // Control Point capture & Contested state tick (3-player FFA)
    if(room.mode==='control'&&room.control){
-    let ctrl=room.control,inA=0,inB=0;
+    let ctrl=room.control,inZone=[];
     for(const pl of room.players.values()){
      if(pl.respawnAt||pl.eliminated)continue;
-     if(Math.hypot(pl.x-CONTROL_POINT.x,pl.z-CONTROL_POINT.z)<=CONTROL_POINT.radius){
-      if(pl.team==='A')inA++;else if(pl.team==='B')inB++;
-     }
+     if(Math.hypot(pl.x-CONTROL_POINT.x,pl.z-CONTROL_POINT.z)<=CONTROL_POINT.radius)inZone.push(pl);
     }
-    if(inA>0&&inB>0){
+    if(inZone.length>=2){
      ctrl.contested=true;
     }else{
      ctrl.contested=false;
-     let capTeam=inA>0?'A':inB>0?'B':null;
-     if(capTeam&&ctrl.owner!==capTeam){
-      if(ctrl.capturing===capTeam||!ctrl.capturing){
-       ctrl.capturing=capTeam;ctrl.capture=Math.min(100,ctrl.capture+4.5);
+     let cap=inZone[0]||null;
+     if(cap&&ctrl.ownerId!==cap.id){
+      if(ctrl.capturingId===cap.id||!ctrl.capturingId){
+       ctrl.capturingId=cap.id;ctrl.capturingName=cap.name;
+       ctrl.capture=Math.min(100,(ctrl.capture||0)+5.5);
        if(ctrl.capture>=100){
-        ctrl.owner=capTeam;ctrl.capturing=null;ctrl.capture=0;
-        broadcast(room,{type:'notice',text:`🚩 ТОЧКА ЗАХВАЧЕНА КОМАНДОЙ ${capTeam==='A'?'СИНИХ':'КРАСНЫХ'}!`});
+        ctrl.ownerId=cap.id;ctrl.ownerName=cap.name;ctrl.capturingId=null;ctrl.capturingName=null;ctrl.capture=0;
+        broadcast(room,{type:'notice',text:`🚩 ТОЧКА ЗАХВАЧЕНА: ${cap.name}!`});
        }
       }else{
-       ctrl.capture=Math.max(0,ctrl.capture-5);
-       if(ctrl.capture<=0)ctrl.capturing=capTeam;
+       ctrl.capture=Math.max(0,(ctrl.capture||0)-6);
+       if(ctrl.capture<=0){ctrl.capturingId=cap.id;ctrl.capturingName=cap.name}
       }
-     }else if(!capTeam&&ctrl.capture>0){
+     }else if(!cap&&(ctrl.capture||0)>0){
       ctrl.capture=Math.max(0,ctrl.capture-1.5);
-      if(ctrl.capture<=0)ctrl.capturing=null;
+      if(ctrl.capture<=0){ctrl.capturingId=null;ctrl.capturingName=null}
      }
     }
-    if(ctrl.owner&&!ctrl.contested){
-     let mult=1+0.25*Math.max(0,(ctrl.owner==='A'?inA:inB)-1);
-     if(ctrl.owner==='A'){ctrl.progressA=Math.min(100,ctrl.progressA+0.42*mult);if(ctrl.progressA>=100)finish(room,'A')}
-     else{ctrl.progressB=Math.min(100,ctrl.progressB+0.42*mult);if(ctrl.progressB>=100)finish(room,'B')}
+    if(ctrl.ownerId&&!ctrl.contested){
+     let ownerAlive=room.players.has(ctrl.ownerId);
+     if(ownerAlive){
+      let ownerIn=inZone.some(pl=>pl.id===ctrl.ownerId);
+      let mult=ownerIn?1.25:1.0;
+      let nextPct=Math.min(100,(ctrl.progress[ctrl.ownerId]||0)+0.55*mult);
+      ctrl.progress[ctrl.ownerId]=nextPct;
+      if(nextPct>=100)finish(room,ctrl.ownerId);
+     }
     }
    }
    tickBots(room,now,.1);
   }
   if(room.phase==='lobby'&&room.countdown&&now>=room.countdown)tryStartRoom(room);
   else if(room.phase==='match'&&room.mode==='neoball'){if(room.neo.resetAt&&now>=room.neo.resetAt){room.neo.resetAt=0;room.neo.ball={status:'center',holder:null,x:0,y:0,z:0};broadcast(room,{type:'notice',text:'МЯЧ В ЦЕНТРЕ!'})}neoCheckClock(room,now);if(room.phase==='match'&&room.neo.ball.holder){let holder=room.players.get(room.neo.ball.holder);if(holder)neoUpdatePlayer(room,holder)}if(room.phase==='match')sync(room)}
-  else if(room.phase==='match'&&now>=room.ends)finish(room,room.mode==='chaser'?'survivors':(room.mode==='control'&&room.control?(room.control.progressA>=room.control.progressB?'A':'B'):null));
+  else if(room.phase==='match'&&now>=room.ends){
+   let win=room.mode==='chaser'?'survivors':null;
+   if(room.mode==='control'&&room.control){
+    let bestId=null,bestPct=-1;
+    for(const pl of room.players.values()){
+     let pct=room.control.progress?.[pl.id]||0;
+     if(pct>bestPct){bestPct=pct;bestId=pl.id}
+    }
+    win=bestId;
+   }
+   finish(room,win);
+  }
   else if(room.phase==='ending'&&now>=room.ends){room.phase='results';room.ends=now+15000;sync(room)}
   else if(room.phase==='results'&&now>=room.ends&&(room.mode==='voting'||room.mode==='neoball'||room.mode==='chaser'||room.mode==='control')){returnToHub(room)}
   else if(room.phase==='results'&&now>=room.ends){room.phase='lobby';room.epoch++;room.ends=0;room.countdown=0;room.results=null;room.botConsent=false;room.botPrompted=false;for(const [id,p] of [...room.players.entries()]){if(p.isBot){room.players.delete(id);continue}let rdef=ROLE_DEFS[validRole(p.role)];p.x=0;p.z=-7;p.y=0;p.flip=0;p.hp=rdef.maxHp;p.maxHp=rdef.maxHp;p.shield=rdef.maxShield;p.maxShield=rdef.maxShield;p.shieldActive=false;p.ultCharge=0;p.eliminated=false;p.ready=false;p.seated=false;p.vote=null;p.respawnAt=0}sync(room)}
