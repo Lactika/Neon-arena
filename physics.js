@@ -78,7 +78,7 @@ export const GARDEN_BLOCKS = [
  {x:-14.5,z:-13.8,hx:1.8,hz:1.2,h:1.15,kind:'flowerbed'},
  {x:14.5,z:13.8,hx:1.8,hz:1.2,h:1.15,kind:'flowerbed'}
 ];
-export const HUB_ZONES=[{id:'neo2',mode:'neoball',capacity:2,x:-8,z:-11,radius:2.3},{id:'chaser',mode:'chaser',capacity:5,minPlayers:3,x:0,z:-11,radius:2.35},{id:'neo4',mode:'neoball',capacity:4,x:8,z:-11,radius:2.3},{id:'duo',capacity:2,x:-8,z:3,radius:2.3},{id:'control',mode:'control',capacity:6,minPlayers:4,x:0,z:3,radius:2.35},{id:'squad',capacity:4,x:8,z:3,radius:2.3}];
+export const HUB_ZONES=[{id:'neo2',mode:'neoball',capacity:2,x:-8,z:-11,radius:2.3},{id:'chaser',mode:'chaser',capacity:5,minPlayers:3,x:0,z:-11,radius:2.35},{id:'neo4',mode:'neoball',capacity:4,x:8,z:-11,radius:2.3},{id:'duo',capacity:2,x:-8,z:3,radius:2.3},{id:'control',mode:'control',capacity:3,minPlayers:3,x:0,z:3,radius:2.35},{id:'squad',capacity:4,x:8,z:3,radius:2.3}];
 export const DESTRUCTIBLE_PRESETS={
  colosseum:[
   {id:'d_c1',x:-5.5,z:0,hx:1.15,hz:1.15,h:2.1,hp:180,maxHp:180},
